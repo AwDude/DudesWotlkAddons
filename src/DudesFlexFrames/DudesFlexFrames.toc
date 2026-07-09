@@ -1,0 +1,9 @@
+## Interface: 30300
+## Title: Dude's Flexible Frames
+## Notes: Prevents default frames from auto-closing and makes them scale- and movable.
+## Version: 1.0
+## Author: Dude
+## SavedVariables: DudesFlexFrames_Positions, DudesFlexFrames_Scales
+## Dependencies: DudesUtils
+
+DudesFlexFrames.lua

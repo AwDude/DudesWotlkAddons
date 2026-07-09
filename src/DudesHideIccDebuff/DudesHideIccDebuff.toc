@@ -1,0 +1,8 @@
+## Interface: 30300
+## Title: Dude's Hide ICC Debuff
+## Notes: Hides ICC Debuff
+## Version: 1.0
+## Author: Dude
+## Dependencies: DudesUtils
+
+DudesHideIccDebuff.lua
