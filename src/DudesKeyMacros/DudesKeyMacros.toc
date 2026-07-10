@@ -1,0 +1,13 @@
+## Interface: 30300
+## Title: Dude's Key Macros
+## Notes: Character and spec specific macro keybindings using secure action buttons.
+## Version: 0.1
+## Author: Dude
+## SavedVariables: DudesKeyMacrosDB
+## Dependencies: DudesUtils
+
+Core.lua
+Icons.lua
+Overlay.lua
+Editor.lua
+Settings.lua
