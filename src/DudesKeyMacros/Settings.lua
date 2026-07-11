@@ -2,10 +2,21 @@ local ADDON = DudesKeyMacros
 
 local optionsPanel
 local minimapButton
+local layoutRows = {}
+
+local function clamp(value, minValue, maxValue)
+    if value < minValue then
+        return minValue
+    elseif value > maxValue then
+        return maxValue
+    end
+    return value
+end
 
 local function createText(parent, size)
     local text = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     text:SetFont(STANDARD_TEXT_FONT, size or 11)
+    text:SetJustifyH("LEFT")
     return text
 end
 
@@ -18,6 +29,168 @@ local function refreshMinimapButton()
         minimapButton:Show()
     else
         minimapButton:Hide()
+    end
+end
+
+local function layoutSettingsRows()
+    if not optionsPanel or not optionsPanel.layoutRows then
+        return
+    end
+
+    local panelWidth = optionsPanel:GetWidth() or 520
+    local rowWidth = clamp(panelWidth - 48, 260, 520)
+    local loadWidth = 64
+    local deleteWidth = 76
+    local buttonGap = 6
+    local textWidth = math.max(120, rowWidth - loadWidth - deleteWidth - buttonGap - 12)
+    local loadX = textWidth + 8
+
+    for _, row in ipairs(optionsPanel.layoutRows) do
+        row:SetWidth(rowWidth)
+        row.name:SetWidth(textWidth)
+        row.meta:SetWidth(textWidth)
+
+        row.load:ClearAllPoints()
+        row.load:SetWidth(loadWidth)
+        row.load:SetPoint("TOPLEFT", row, "TOPLEFT", loadX, -5)
+
+        row.delete:ClearAllPoints()
+        row.delete:SetWidth(deleteWidth)
+        row.delete:SetPoint("LEFT", row.load, "RIGHT", buttonGap, 0)
+    end
+end
+
+local function refreshLayoutRows()
+    if not optionsPanel or not optionsPanel.layoutRows then
+        return
+    end
+
+    layoutSettingsRows()
+
+    local profiles = ADDON.GetLayoutProfiles and ADDON.GetLayoutProfiles() or {}
+    for i, row in ipairs(optionsPanel.layoutRows) do
+        local profile = profiles[i]
+        row.profileId = profile and profile.id or nil
+        if profile then
+            row.name:SetText(profile.name or "")
+            row.meta:SetText((profile.createdAt or "-") .. "  " .. (profile.characterName or "-") .. "  " .. (profile.className or "-") .. "  " .. (profile.specText or "-"))
+            if profile.system then
+                row.delete:Hide()
+            else
+                row.delete:Show()
+            end
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+end
+
+local function raiseSettingsPopup(popup)
+    if not popup then
+        return
+    end
+    popup:SetFrameStrata("TOOLTIP")
+    popup:SetFrameLevel(100)
+end
+
+local function showSaveLayoutDialog()
+    StaticPopupDialogs["DUDES_KEY_MACROS_SAVE_LAYOUT_SETTINGS"] = StaticPopupDialogs["DUDES_KEY_MACROS_SAVE_LAYOUT_SETTINGS"] or {
+        text = "Layout-Name",
+        button1 = "Speichern",
+        button2 = "Abbrechen",
+        hasEditBox = 1,
+        maxLetters = 64,
+        OnAccept = function(self)
+            local name = self.editBox and self.editBox:GetText() or ""
+            if ADDON.SaveAppliedLayoutProfile and ADDON.SaveAppliedLayoutProfile(name) then
+                refreshLayoutRows()
+            else
+                DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffDudesKeyMacros:|r Layout name must be unique.")
+            end
+        end,
+        OnShow = function(self)
+            if self.editBox then
+                self.editBox:SetText("")
+                self.editBox:SetFocus()
+            end
+        end,
+        EditBoxOnEnterPressed = function(self)
+            local parent = self:GetParent()
+            local name = self:GetText() or ""
+            if ADDON.SaveAppliedLayoutProfile and ADDON.SaveAppliedLayoutProfile(name) then
+                parent:Hide()
+                refreshLayoutRows()
+            end
+        end,
+        timeout = 0,
+        whileDead = 1,
+        hideOnEscape = 1,
+    }
+    raiseSettingsPopup(StaticPopup_Show("DUDES_KEY_MACROS_SAVE_LAYOUT_SETTINGS"))
+end
+
+local function showLoadLayoutDialog(profileId, profileName)
+    if not profileId then
+        return
+    end
+
+    StaticPopupDialogs["DUDES_KEY_MACROS_LOAD_LAYOUT_SETTINGS"] = StaticPopupDialogs["DUDES_KEY_MACROS_LOAD_LAYOUT_SETTINGS"] or {
+        text = "Layout '%s' laden?\n\nDieses Layout ersetzt alle aktuellen DudesKeyMacros-Makros und Interface-Bindings des aktiven Specs.\n\nMoechtest du wirklich fortfahren?",
+        button1 = "Laden",
+        button2 = "Abbrechen",
+        OnAccept = function(self)
+            local id = self.profileId
+            if id and ADDON.LoadLayoutProfile then
+                ADDON.LoadLayoutProfile(id)
+                refreshLayoutRows()
+            end
+            self.profileId = nil
+        end,
+        OnCancel = function(self)
+            self.profileId = nil
+        end,
+        timeout = 0,
+        whileDead = 1,
+        hideOnEscape = 1,
+    }
+
+    local popup = StaticPopup_Show("DUDES_KEY_MACROS_LOAD_LAYOUT_SETTINGS", profileName or "")
+    if popup then
+        popup.profileId = profileId
+        raiseSettingsPopup(popup)
+    end
+end
+
+local function showDeleteLayoutDialog(profileId, profileName)
+    if not profileId then
+        return
+    end
+
+    StaticPopupDialogs["DUDES_KEY_MACROS_DELETE_LAYOUT_SETTINGS"] = StaticPopupDialogs["DUDES_KEY_MACROS_DELETE_LAYOUT_SETTINGS"] or {
+        text = "Layout '%s' loeschen?\n\nDieses gespeicherte Layout wird dauerhaft entfernt.",
+        button1 = "Loeschen",
+        button2 = "Abbrechen",
+        OnAccept = function(self)
+            local id = self.profileId
+            if id and ADDON.DeleteLayoutProfile then
+                ADDON.DeleteLayoutProfile(id)
+                refreshLayoutRows()
+            end
+            self.profileId = nil
+        end,
+        OnCancel = function(self)
+            self.profileId = nil
+        end,
+        timeout = 0,
+        whileDead = 1,
+        hideOnEscape = 1,
+    }
+
+    local popup = StaticPopup_Show("DUDES_KEY_MACROS_DELETE_LAYOUT_SETTINGS", profileName or "")
+    if popup then
+        popup.profileId = profileId
+        raiseSettingsPopup(popup)
     end
 end
 
@@ -59,9 +232,64 @@ local function createOptionsPanel()
         end
     end)
 
+    local layoutTitle = createText(optionsPanel, 15)
+    layoutTitle:SetPoint("TOPLEFT", openLayoutButton, "BOTTOMLEFT", -2, -24)
+    layoutTitle:SetText("Layouts")
+
+    local saveLayoutButton = CreateFrame("Button", nil, optionsPanel, "UIPanelButtonTemplate")
+    saveLayoutButton:SetWidth(120)
+    saveLayoutButton:SetHeight(24)
+    saveLayoutButton:SetPoint("TOPLEFT", layoutTitle, "BOTTOMLEFT", 0, -10)
+    saveLayoutButton:SetText("Speichern")
+    saveLayoutButton:SetScript("OnClick", showSaveLayoutDialog)
+
+    optionsPanel.layoutRows = layoutRows
+    for i = 1, 8 do
+        local row = CreateFrame("Frame", nil, optionsPanel)
+        row:SetWidth(260)
+        row:SetHeight(34)
+        row:SetPoint("TOPLEFT", saveLayoutButton, "BOTTOMLEFT", 0, -8 - (i - 1) * 38)
+
+        row.name = createText(row, 11)
+        row.name:SetPoint("TOPLEFT", row, "TOPLEFT", 0, -1)
+        row.name:SetWidth(130)
+
+        row.meta = createText(row, 9)
+        row.meta:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -2)
+        row.meta:SetWidth(130)
+        row.meta:SetTextColor(0.72, 0.72, 0.72)
+
+        row.load = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        row.load:SetWidth(58)
+        row.load:SetHeight(22)
+        row.load:SetPoint("TOPLEFT", row, "TOPLEFT", 140, -5)
+        row.load:SetText("Laden")
+        row.load:SetScript("OnClick", function(self)
+            local parent = self:GetParent()
+            if parent.profileId then
+                showLoadLayoutDialog(parent.profileId, parent.name:GetText())
+            end
+        end)
+
+        row.delete = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        row.delete:SetWidth(70)
+        row.delete:SetHeight(22)
+        row.delete:SetPoint("LEFT", row.load, "RIGHT", 6, 0)
+        row.delete:SetText("Loeschen")
+        row.delete:SetScript("OnClick", function(self)
+            local parent = self:GetParent()
+            if parent.profileId then
+                showDeleteLayoutDialog(parent.profileId, parent.name:GetText())
+            end
+        end)
+
+        layoutRows[i] = row
+    end
+
     optionsPanel:SetScript("OnShow", function()
         ADDON.RefreshSettings()
     end)
+    optionsPanel:SetScript("OnSizeChanged", layoutSettingsRows)
 
     InterfaceOptions_AddCategory(optionsPanel)
 
@@ -73,6 +301,7 @@ function ADDON.RefreshSettings()
         return
     end
     optionsPanel.minimapCheckbox:SetChecked(ADDON.GetSettings().showMinimapButton)
+    refreshLayoutRows()
 end
 
 function ADDON.ToggleSettings()

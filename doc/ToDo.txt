@@ -2,5 +2,39 @@
 - loot and roll tracker
     - maybe with AK 10 / 25 auto mode?
 
-DudesKeyMacros
-- icon display funktioniert nicht, interface texte zu klein -> komplett überarbeiten
+DudesKeyMakros
+- check: interface action search artefakt weg in icon editor?
+- icon text passt noch nicht ganz
+- zeige umlaute überall korrekt anstatt oe für ö usw
+- rename to DudesFlexBindings
+- how to handle übernommen / fahrzeug (possess bar / bonusbar)
+    - im makro editor einen abschnitt Bonusbar hinzufügen
+    - dort wie bei den interface bindings für jeden modifier eine zeile
+    - wenn auf dem modifier schon auf einer interface aktion liegt, die zeile sperren und ein warning anzeigen
+    - pro modifier zeile kann man dann mit einem selektor die nummer auswählen, die der position auf der bonusbar entspricht
+    - man kann im selektor auch "-" auswählen um keine bonusbar action zu binden (default)
+    - falls mind eine bonusbar aktion für die taste ausgewählt ist:
+        - im layout oben rechtsbündig auf höhe des tasten namens in grau "bonus:" anzeigen
+        - rechts daneben in den farben des modifiers die nummern der gebundenen bonus actions
+        - schriftgröße kleiner als der tasten name
+    - in den einstellungen:
+        - gibt es eine checkbox "bonusbar aktivieren"
+        - wenn bonusbar aktiviert
+            - gibt es eine "bonusbar ausrichten" checkbox
+            - gibt es eine "bonusbar icons zentrieren" checkbox
+        - wenn bonusbar ausrichten aktiviert
+            - man sieht einen rahmen im spiel der die bonusbar leiste darstellt
+            - man kann den rahmen bewegen
+            - man kann die größe des rahmens ändern
+        - sobald im spiel wirklich eine bonusbar aktiv ist (übernommen bei Blutkönigin in ICC, oder man sitzt im Fahrzeug, etc)
+            - zeigt die addon bonusbar alle icons der bonusbar an (entweder linksbündig oder zentriert)
+            - innerhalb jedes Icons wird unten rechts das akutell zugeordnete key binding als text angezeigt (z.b. <s>T)
+- code cleanup
+    - entferne ungenutzten und alten Code
+    - Gebe dem aktuellen Code eine gute Architektur und Struktur
+    - Vereinheitliche, Modularisiere und verwende Code so gut es geht wieder
+    - Benutze DudesUtils
+        - nutze vorhandene DudeUtils Funktionen soweit sinnvoll (z.b. für eventlistener)
+        - sehr allgemeine utility funktionen bitte in die DudesUtils auslagern (z.b. für arrays / tables)
+        - Schaue dir die aktuellen funktionen in DudeUtils an und mache es im selben stil
+        - verändere keine existierenden funktionen in den DudeUtils, da diese von anderen addons verwendet werden

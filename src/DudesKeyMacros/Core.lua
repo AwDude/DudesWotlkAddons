@@ -10,9 +10,11 @@ ADDON.keys = {
     "ESCAPE",
     "^", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "ß", "´",
     "TAB",
+    "CAPSLOCK",
     "Q", "W", "E", "R", "T", "Z", "U", "I", "O", "P", "Ü", "+",
     "A", "S", "D", "F", "G", "H", "J", "K", "L", "Ö", "Ä", "#",
     "<",
+    "SPACE", "PRINTSCREEN",
     "Y", "X", "C", "V", "B", "N", "M", ",", ".", "-",
     "F1", "F2", "F3", "F4", "F5", "F6",
     "F7", "F8", "F9", "F10", "F11", "F12",
@@ -22,18 +24,22 @@ ADDON.mouseKeys = {
     "MOUSEWHEELUP",
     "MOUSEWHEELDOWN",
     "BUTTON3",
-    "BUTTON4",
     "BUTTON5",
+    "BUTTON4",
 }
 
 local ownerFrame
 local toggleButton
 local runtimeButtons = {}
 local pendingRuntimeUpdate
+local pendingDefaultBindingUpdate
 local initialized
+local macroErrorHandlerInstalled
+local previousErrorHandler
 local draftLayout
 local draftDirty
 local isOwnBindingAction
+local applyDefaultBindingActionNow
 
 local BLIZZARD_DEFAULT_BINDINGS = {
     ESCAPE = { normal = "TOGGLEGAMEMENU" },
@@ -62,6 +68,7 @@ local BLIZZARD_DEFAULT_BINDINGS = {
     ["ß"] = { normal = "ACTIONBUTTON11" },
     ["´"] = { normal = "ACTIONBUTTON12" },
     TAB = { normal = "TARGETNEARESTENEMY" },
+    CAPSLOCK = { normal = "TOGGLEAUTORUN" },
     Q = { normal = "STRAFELEFT" },
     W = { normal = "MOVEFORWARD" },
     E = { normal = "STRAFERIGHT" },
@@ -88,6 +95,8 @@ local BLIZZARD_DEFAULT_BINDINGS = {
     N = { normal = "TOGGLETALENTS" },
     M = { normal = "TOGGLEWORLDMAP" },
     ["-"] = { normal = "MINIMAPZOOMOUT" },
+    SPACE = { normal = "JUMP" },
+    PRINTSCREEN = { normal = "SCREENSHOT" },
     MOUSEWHEELUP = { normal = "MINIMAPZOOMIN" },
     MOUSEWHEELDOWN = { normal = "MINIMAPZOOMOUT" },
     BUTTON4 = { normal = "TOGGLEAUTORUN" },
@@ -294,7 +303,7 @@ function ADDON.ResetDraftToApplied()
 end
 
 function ADDON.HasPendingChanges()
-    return draftDirty and true or false
+    return false
 end
 
 function ADDON.GetDraftLayout()
@@ -306,29 +315,53 @@ function ADDON.GetAppliedLayout()
 end
 
 function ADDON.GetBinding(key)
-    ADDON.EnsureDraftLayout()
-    return draftLayout.bindings[key]
+    local spec = ADDON.GetCurrentSpecDB()
+    return spec.bindings[key]
 end
 
 function ADDON.GetOrCreateBinding(key)
-    ADDON.EnsureDraftLayout()
-    draftLayout.bindings[key] = draftLayout.bindings[key] or { macrotext = "", icons = {} }
-    draftLayout.bindings[key].icons = draftLayout.bindings[key].icons or {}
-    return draftLayout.bindings[key]
+    local spec = ADDON.GetCurrentSpecDB()
+    spec.bindings[key] = spec.bindings[key] or { macrotext = "", icons = {} }
+    spec.bindings[key].icons = spec.bindings[key].icons or {}
+    return spec.bindings[key]
+end
+
+local function normalizeIconList(icons)
+    local normalized = {}
+    for _, icon in ipairs(icons or {}) do
+        if type(icon) == "table" and icon.texture and icon.texture ~= "" then
+            table.insert(normalized, {
+                texture = icon.texture,
+                text = icon.text or "",
+                name = icon.name or icon.texture,
+            })
+        elseif type(icon) == "string" and icon ~= "" then
+            table.insert(normalized, {
+                texture = icon,
+                text = "",
+                name = icon,
+            })
+        end
+    end
+    return normalized
 end
 
 function ADDON.SetBindingData(key, macrotext, icons)
-    ADDON.EnsureDraftLayout()
     macrotext = macrotext or ""
-    icons = icons or {}
-    local oldBinding = draftLayout.bindings[key]
-    if oldBinding and (oldBinding.macrotext or "") == macrotext and tablesEqual(oldBinding.icons or {}, icons) then
+    icons = normalizeIconList(icons)
+    local spec = ADDON.GetCurrentSpecDB()
+    local oldBinding = spec.bindings[key]
+    if oldBinding and (oldBinding.macrotext or "") == macrotext and tablesEqual(normalizeIconList(oldBinding.icons), icons) then
         return
     end
     local binding = ADDON.GetOrCreateBinding(key)
     binding.macrotext = macrotext
     binding.icons = icons
-    draftDirty = true
+    binding.iconMatrix = nil
+    ADDON.ApplyRuntime()
+    if ADDON.RefreshOverlay then
+        ADDON.RefreshOverlay()
+    end
 end
 
 local function getButtonNameForKey(key)
@@ -386,8 +419,8 @@ end
 
 function ADDON.GetConflicts(key)
     local conflicts = {}
-    ADDON.EnsureDraftLayout()
-    local keyDefaults = draftLayout.defaultBindings[key] or {}
+    local spec = ADDON.GetCurrentSpecDB()
+    local keyDefaults = spec.defaultBindings[key] or {}
     for _, variant in ipairs(ADDON.GetDefaultBindingKeysForKey(key)) do
         local action = keyDefaults[variant.modifier or "normal"]
         if action and action ~= "" then
@@ -401,11 +434,11 @@ function ADDON.GetConflicts(key)
 end
 
 function ADDON.GetDefaultBindingAction(bindingKey)
-    ADDON.EnsureDraftLayout()
+    local spec = ADDON.GetCurrentSpecDB()
     for _, key in ipairs(getLayoutKeyList()) do
         for _, variant in ipairs(ADDON.GetDefaultBindingKeysForKey(key)) do
             if variant.key == bindingKey then
-                local keyDefaults = draftLayout.defaultBindings[key] or {}
+                local keyDefaults = spec.defaultBindings[key] or {}
                 return keyDefaults[variant.modifier or "normal"] or ""
             end
         end
@@ -414,21 +447,24 @@ function ADDON.GetDefaultBindingAction(bindingKey)
 end
 
 function ADDON.SetDefaultBindingAction(bindingKey, action)
-    ADDON.EnsureDraftLayout()
+    local spec = ADDON.GetCurrentSpecDB()
     for _, key in ipairs(getLayoutKeyList()) do
         for _, variant in ipairs(ADDON.GetDefaultBindingKeysForKey(key)) do
             if variant.key == bindingKey then
-                local oldAction = ((draftLayout.defaultBindings[key] or {})[variant.modifier or "normal"]) or ""
+                local oldAction = ((spec.defaultBindings[key] or {})[variant.modifier or "normal"]) or ""
                 action = action or ""
                 if oldAction == action then
                     return true
                 end
-                draftLayout.defaultBindings[key] = draftLayout.defaultBindings[key] or {}
-                draftLayout.defaultBindings[key][variant.modifier or "normal"] = action ~= "" and action or nil
-                if next(draftLayout.defaultBindings[key]) == nil then
-                    draftLayout.defaultBindings[key] = nil
+                spec.defaultBindings[key] = spec.defaultBindings[key] or {}
+                spec.defaultBindings[key][variant.modifier or "normal"] = action ~= "" and action or nil
+                if next(spec.defaultBindings[key]) == nil then
+                    spec.defaultBindings[key] = nil
                 end
-                draftDirty = true
+                if applyDefaultBindingActionNow then
+                    applyDefaultBindingActionNow(bindingKey, action)
+                end
+                ADDON.ApplyRuntime()
                 if ADDON.RefreshOverlay then
                     ADDON.RefreshOverlay()
                 end
@@ -444,9 +480,9 @@ function ADDON.FindDraftBindingForAction(action, excludedBindingKey)
         return nil
     end
 
-    ADDON.EnsureDraftLayout()
+    local spec = ADDON.GetCurrentSpecDB()
     for _, key in ipairs(getLayoutKeyList()) do
-        local keyDefaults = draftLayout.defaultBindings[key]
+        local keyDefaults = spec.defaultBindings[key]
         if keyDefaults then
             for _, variant in ipairs(ADDON.GetDefaultBindingKeysForKey(key)) do
                 if variant.key ~= excludedBindingKey and keyDefaults[variant.modifier or "normal"] == action then
@@ -524,9 +560,12 @@ function ADDON.GetAvailableBindingActions(filter)
 end
 
 function ADDON.ClearDefaultBindingsForKey(key)
-    ADDON.EnsureDraftLayout()
-    draftLayout.defaultBindings[key] = nil
-    draftDirty = true
+    local spec = ADDON.GetCurrentSpecDB()
+    spec.defaultBindings[key] = nil
+    ADDON.ApplyRuntime()
+    if ADDON.RefreshOverlay then
+        ADDON.RefreshOverlay()
+    end
     return true
 end
 
@@ -549,6 +588,29 @@ local function ensureOwnerFrame()
     return ownerFrame
 end
 
+local function installMacroErrorHandler()
+    if macroErrorHandlerInstalled or not seterrorhandler then
+        return
+    end
+
+    if geterrorhandler then
+        previousErrorHandler = geterrorhandler()
+    end
+    seterrorhandler(function(message)
+        if ADDON.executingMacroKey then
+            printMessage("Makro auf Taste '" .. tostring(ADDON.executingMacroKey) .. "' hat einen Fehler verursacht. Bitte ueberpruefe das Makro.")
+            ADDON.executingMacroKey = nil
+            return
+        end
+        if previousErrorHandler then
+            previousErrorHandler(message)
+        elseif DEFAULT_CHAT_FRAME then
+            DEFAULT_CHAT_FRAME:AddMessage(tostring(message))
+        end
+    end)
+    macroErrorHandlerInstalled = true
+end
+
 local function ensureRuntimeButton(key)
     local buttonName = getButtonNameForKey(key)
     if runtimeButtons[key] then
@@ -556,8 +618,15 @@ local function ensureRuntimeButton(key)
     end
 
     local button = CreateFrame("Button", buttonName, UIParent, "SecureActionButtonTemplate")
+    button.dkmKey = key
     button:SetAttribute("type", "macro")
     button:SetAttribute("type1", "macro")
+    button:SetScript("PreClick", function(self)
+        ADDON.executingMacroKey = self.dkmKey
+    end)
+    button:SetScript("PostClick", function()
+        ADDON.executingMacroKey = nil
+    end)
     button:Hide()
     runtimeButtons[key] = button
     return button
@@ -588,6 +657,7 @@ end
 
 function ADDON.ApplyRuntime()
     ensureOwnerFrame()
+    installMacroErrorHandler()
 
     if InCombatLockdown() then
         ADDON.QueueRuntimeUpdate()
@@ -601,12 +671,17 @@ function ADDON.ApplyRuntime()
     for key, binding in pairs(spec.bindings) do
         if binding.macrotext and binding.macrotext ~= "" then
             local button = ensureRuntimeButton(key)
-            setRuntimeMacroAttributes(button, binding.macrotext)
-            local buttonName = button:GetName()
-            local keyDefaults = spec.defaultBindings[key] or {}
+            local ok = pcall(setRuntimeMacroAttributes, button, binding.macrotext)
+            if ok then
+                local buttonName = button:GetName()
+                local keyDefaults = spec.defaultBindings[key] or {}
 
-            if not keyDefaults.normal or keyDefaults.normal == "" then
-                SetOverrideBindingClick(ownerFrame, true, key, buttonName, "LeftButton")
+                if not keyDefaults.normal or keyDefaults.normal == "" then
+                    ok = pcall(SetOverrideBindingClick, ownerFrame, true, key, buttonName, "LeftButton")
+                end
+            end
+            if not ok then
+                printMessage("Makro auf Taste '" .. tostring(key) .. "' hat einen Fehler verursacht. Bitte ueberpruefe das Makro.")
             end
         end
     end
@@ -623,16 +698,18 @@ function ADDON.SaveBinding(key, macrotext, icons)
 end
 
 function ADDON.ClearBinding(key)
-    ADDON.EnsureDraftLayout()
-    if not draftLayout.bindings[key] then
+    local spec = ADDON.GetCurrentSpecDB()
+    if not spec.bindings[key] then
         return
     end
-    draftLayout.bindings[key] = nil
-    draftDirty = true
+    spec.bindings[key] = nil
+    ADDON.ApplyRuntime()
     if ADDON.RefreshOverlay then
         ADDON.RefreshOverlay()
     end
 end
+
+local clearPermanentBindingsForAction
 
 local function setPermanentBinding(bindingKey, action)
     if action == TOGGLE_BINDING_ACTION and SetBindingClick then
@@ -644,7 +721,23 @@ local function setPermanentBinding(bindingKey, action)
     end
 end
 
-local function clearPermanentBindingsForAction(action, targetBindingKey)
+applyDefaultBindingActionNow = function(bindingKey, action)
+    if InCombatLockdown() then
+        printMessage("Interface binding update is blocked during combat.")
+        pendingDefaultBindingUpdate = true
+        return false
+    end
+    if action and action ~= "" then
+        clearPermanentBindingsForAction(action, bindingKey)
+    end
+    setPermanentBinding(bindingKey, action)
+    if SaveBindings then
+        SaveBindings(CHARACTER_BINDING_SET)
+    end
+    return true
+end
+
+clearPermanentBindingsForAction = function(action, targetBindingKey)
     if not action or action == "" or not GetBindingKey then
         return
     end
@@ -658,6 +751,30 @@ local function clearPermanentBindingsForAction(action, targetBindingKey)
     end
 end
 
+local function applyCurrentDefaultBindings()
+    if InCombatLockdown() then
+        pendingDefaultBindingUpdate = true
+        return false
+    end
+
+    local spec = ADDON.GetCurrentSpecDB()
+    for _, key in ipairs(getLayoutKeyList()) do
+        local keyDefaults = spec.defaultBindings[key] or {}
+        for _, variant in ipairs(ADDON.GetDefaultBindingKeysForKey(key)) do
+            local action = keyDefaults[variant.modifier or "normal"]
+            if action and action ~= "" then
+                clearPermanentBindingsForAction(action, variant.key)
+            end
+            setPermanentBinding(variant.key, action)
+        end
+    end
+    if SaveBindings then
+        SaveBindings(CHARACTER_BINDING_SET)
+    end
+    pendingDefaultBindingUpdate = nil
+    return true
+end
+
 function ADDON.EnsureCharacterBindingSet()
     if InCombatLockdown() then
         return false
@@ -669,46 +786,21 @@ function ADDON.EnsureCharacterBindingSet()
 end
 
 function ADDON.ApplyDraftLayout()
-    ADDON.EnsureDraftLayout()
     if InCombatLockdown() then
-        printMessage("Cannot apply layout during combat.")
+        printMessage("Runtime update is queued until combat ends.")
+        ADDON.QueueRuntimeUpdate()
         return false
     end
-
-    local spec = ADDON.GetCurrentSpecDB()
-    spec.bindings = copyTable(draftLayout.bindings)
-    spec.defaultBindings = copyTable(draftLayout.defaultBindings)
-
-    for _, key in ipairs(getLayoutKeyList()) do
-        local keyDefaults = spec.defaultBindings[key] or {}
-        for _, bindingKey in ipairs(getBindingKeys(key)) do
-            local modifier = "normal"
-            if string.find(bindingKey, "^SHIFT%-") then
-                modifier = "shift"
-            elseif string.find(bindingKey, "^CTRL%-") then
-                modifier = "ctrl"
-            elseif string.find(bindingKey, "^ALT%-") then
-                modifier = "alt"
-            end
-            clearPermanentBindingsForAction(keyDefaults[modifier], bindingKey)
-            setPermanentBinding(bindingKey, keyDefaults[modifier])
-        end
-    end
-
-    SaveBindings(CHARACTER_BINDING_SET)
     ADDON.ApplyRuntime()
-    setDraftLayout(getCurrentAppliedLayout(), false)
-    printMessage("Layout applied.")
     return true
 end
 
 function ADDON.DiscardDraftLayout()
-    setDraftLayout(getCurrentAppliedLayout(), false)
-    printMessage("Pending layout changes discarded.")
+    return true
 end
 
 function ADDON.LoadLayoutIntoDraft(layout)
-    setDraftLayout(layout or makeEmptyLayout(), true)
+    return ADDON.LoadLayout(layout)
 end
 
 local function makeProfile(name, layout, systemId, protected)
@@ -767,16 +859,38 @@ local function findLayoutProfile(profileId)
     return nil
 end
 
+function ADDON.LoadLayout(layout)
+    if InCombatLockdown() then
+        printMessage("Layout cannot be loaded during combat.")
+        return false
+    end
+
+    layout = layout or makeEmptyLayout()
+    local spec = ADDON.GetCurrentSpecDB()
+    spec.bindings = copyTable(layout.bindings or {})
+    spec.defaultBindings = copyTable(layout.defaultBindings or {})
+
+    applyCurrentDefaultBindings()
+
+    ADDON.ApplyRuntime()
+    if ADDON.RefreshOverlay then
+        ADDON.RefreshOverlay()
+    end
+    return true
+end
+
 function ADDON.LoadLayoutProfile(profileId)
     local profile = findLayoutProfile(profileId)
     if not profile then
         return false
     end
-    ADDON.LoadLayoutIntoDraft({
+    if not ADDON.LoadLayout({
         bindings = profile.bindings or {},
         defaultBindings = profile.defaultBindings or {},
-    })
-    printMessage("Loaded layout '" .. profile.name .. "' as pending changes.")
+    }) then
+        return false
+    end
+    printMessage("Loaded layout '" .. profile.name .. "'.")
     return true
 end
 
@@ -784,7 +898,7 @@ function ADDON.SaveAppliedLayoutProfile(name)
     ADDON.InitDB()
     name = string.gsub(name or "", "^%s+", "")
     name = string.gsub(name, "%s+$", "")
-    if name == "" or ADDON.HasPendingChanges() then
+    if name == "" then
         return false
     end
     if name == "system_empty" or name == "system_blizzard_defaults" then
@@ -857,6 +971,7 @@ local function refreshForWorldState()
         initialized = true
     end
     ADDON.ResetDraftToApplied()
+    applyCurrentDefaultBindings()
     ADDON.ApplyRuntime()
     if ADDON.RefreshOverlay then
         ADDON.RefreshOverlay()
@@ -907,6 +1022,9 @@ DudesUtils.EventHandler.Add("PLAYER_LOGIN", refreshForWorldState)
 DudesUtils.EventHandler.Add("PLAYER_ENTERING_WORLD", refreshForWorldState)
 DudesUtils.EventHandler.Add("ACTIVE_TALENT_GROUP_CHANGED", refreshForWorldState)
 DudesUtils.EventHandler.Add("PLAYER_REGEN_ENABLED", function()
+    if pendingDefaultBindingUpdate then
+        applyCurrentDefaultBindings()
+    end
     if pendingRuntimeUpdate then
         ADDON.ApplyRuntime()
     end
