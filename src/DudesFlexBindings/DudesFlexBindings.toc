@@ -1,9 +1,9 @@
-## Interface: 30300
-## Title: Dude's Key Macros
+﻿## Interface: 30300
+## Title: Dude's Flex Bindings
 ## Notes: Character and spec specific macro keybindings using secure action buttons.
 ## Version: 0.1
 ## Author: Dude
-## SavedVariables: DudesKeyMacrosDB
+## SavedVariables: DudesFlexBindingsDB
 ## Dependencies: DudesUtils
 
 Core.lua

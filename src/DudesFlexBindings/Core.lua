@@ -1,9 +1,10 @@
-DudesKeyMacros = DudesKeyMacros or {}
+﻿DudesFlexBindings = DudesFlexBindings or {}
 
-local ADDON = DudesKeyMacros
-local BUTTON_PREFIX = "DKM_"
+local ADDON = DudesFlexBindings
+local BUTTON_PREFIX = "DFB_"
 local MODIFIERS = { "SHIFT", "CTRL", "ALT" }
-local TOGGLE_BINDING_ACTION = "CLICK DudesKeyMacrosToggleButton:LeftButton"
+local TOGGLE_BINDING_ACTION = "CLICK DudesFlexBindingsToggleButton:LeftButton"
+local ACCOUNT_BINDING_SET = 1
 local CHARACTER_BINDING_SET = 2
 
 ADDON.keys = {
@@ -103,7 +104,7 @@ local BLIZZARD_DEFAULT_BINDINGS = {
 }
 
 local function printMessage(text)
-    DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffDudesKeyMacros:|r " .. text)
+    DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffDudesFlexBindings:|r " .. text)
 end
 
 local function getRealmName()
@@ -252,12 +253,12 @@ local function captureLiveDefaultBindings(spec)
 end
 
 function ADDON.InitDB()
-    DudesKeyMacrosDB = DudesKeyMacrosDB or {}
-    DudesKeyMacrosDB.profiles = DudesKeyMacrosDB.profiles or {}
-    DudesKeyMacrosDB.sharedProfiles = DudesKeyMacrosDB.sharedProfiles or {}
-    DudesKeyMacrosDB.savedLayouts = DudesKeyMacrosDB.savedLayouts or {}
+    DudesFlexBindingsDB = DudesFlexBindingsDB or {}
+    DudesFlexBindingsDB.profiles = DudesFlexBindingsDB.profiles or {}
+    DudesFlexBindingsDB.sharedProfiles = DudesFlexBindingsDB.sharedProfiles or {}
+    DudesFlexBindingsDB.savedLayouts = DudesFlexBindingsDB.savedLayouts or {}
 
-    local realm = ensureTable(DudesKeyMacrosDB.profiles, getRealmName())
+    local realm = ensureTable(DudesFlexBindingsDB.profiles, getRealmName())
     local character = ensureTable(realm, getCharacterName())
     character.settings = character.settings or {}
     character.settings.layout = character.settings.layout or "QWERTZ"
@@ -265,6 +266,7 @@ function ADDON.InitDB()
     if character.settings.showMinimapButton == nil then
         character.settings.showMinimapButton = true
     end
+    character.settings.minimapAngle = character.settings.minimapAngle or 225
     if character.settings.bindModifiers == nil then
         character.settings.bindModifiers = true
     end
@@ -275,11 +277,37 @@ end
 
 function ADDON.GetCharacterDB()
     ADDON.InitDB()
-    return DudesKeyMacrosDB.profiles[getRealmName()][getCharacterName()]
+    return DudesFlexBindingsDB.profiles[getRealmName()][getCharacterName()]
 end
 
 function ADDON.GetSettings()
     return ADDON.GetCharacterDB().settings
+end
+
+function ADDON.GetActiveBindingSet()
+    if GetCurrentBindingSet then
+        return GetCurrentBindingSet()
+    end
+    return CHARACTER_BINDING_SET
+end
+
+function ADDON.IsCharacterBindingSetEnabled()
+    return ADDON.GetActiveBindingSet() == CHARACTER_BINDING_SET
+end
+
+function ADDON.SetCharacterBindingSetEnabled(enabled)
+    if InCombatLockdown and InCombatLockdown() then
+        printMessage("Interface binding set cannot be changed during combat.")
+        return false
+    end
+
+    if SaveBindings and ADDON.GetActiveBindingSet then
+        SaveBindings(ADDON.GetActiveBindingSet())
+    end
+    if LoadBindings then
+        LoadBindings(enabled and CHARACTER_BINDING_SET or ACCOUNT_BINDING_SET)
+    end
+    return true
 end
 
 function ADDON.GetCurrentSpecIndex()
@@ -334,12 +362,14 @@ local function normalizeIconList(icons)
                 texture = icon.texture,
                 text = icon.text or "",
                 name = icon.name or icon.texture,
+                useName = icon.useName and true or false,
             })
         elseif type(icon) == "string" and icon ~= "" then
             table.insert(normalized, {
                 texture = icon,
                 text = "",
                 name = icon,
+                useName = false,
             })
         end
     end
@@ -406,8 +436,8 @@ function ADDON.GetBindingDisplayName(action)
         return ""
     end
 
-    if string.find(action, "CLICK DudesKeyMacrosToggleButton", 1, true) then
-        return "DudesKeyMacros: Toggle layout editor"
+    if string.find(action, "CLICK DudesFlexBindingsToggleButton", 1, true) then
+        return "DudesFlexBindings: Toggle layout editor"
     end
 
     local text = GetBindingText(action, "BINDING_NAME_")
@@ -574,10 +604,10 @@ local function ensureOwnerFrame()
         return ownerFrame
     end
 
-    ownerFrame = CreateFrame("Frame", "DudesKeyMacrosOwnerFrame", UIParent)
+    ownerFrame = CreateFrame("Frame", "DudesFlexBindingsOwnerFrame", UIParent)
     ownerFrame:Hide()
 
-    toggleButton = CreateFrame("Button", "DudesKeyMacrosToggleButton", UIParent)
+    toggleButton = CreateFrame("Button", "DudesFlexBindingsToggleButton", UIParent)
     toggleButton:SetScript("OnClick", function()
         if ADDON.ToggleOverlay then
             ADDON.ToggleOverlay()
@@ -598,7 +628,7 @@ local function installMacroErrorHandler()
     end
     seterrorhandler(function(message)
         if ADDON.executingMacroKey then
-            printMessage("Makro auf Taste '" .. tostring(ADDON.executingMacroKey) .. "' hat einen Fehler verursacht. Bitte ueberpruefe das Makro.")
+            printMessage("Makro auf Taste '" .. tostring(ADDON.executingMacroKey) .. "' hat einen Fehler verursacht. Bitte überprüfe das Makro.")
             ADDON.executingMacroKey = nil
             return
         end
@@ -681,7 +711,7 @@ function ADDON.ApplyRuntime()
                 end
             end
             if not ok then
-                printMessage("Makro auf Taste '" .. tostring(key) .. "' hat einen Fehler verursacht. Bitte ueberpruefe das Makro.")
+                printMessage("Makro auf Taste '" .. tostring(key) .. "' hat einen Fehler verursacht. Bitte überprüfe das Makro.")
             end
         end
     end
@@ -712,13 +742,21 @@ end
 local clearPermanentBindingsForAction
 
 local function setPermanentBinding(bindingKey, action)
+    action = action or ""
+
+    local currentAction = GetBindingAction and (GetBindingAction(bindingKey) or "") or ""
+    if currentAction == action then
+        return false
+    end
+
     if action == TOGGLE_BINDING_ACTION and SetBindingClick then
-        SetBindingClick(bindingKey, "DudesKeyMacrosToggleButton")
+        SetBindingClick(bindingKey, "DudesFlexBindingsToggleButton")
     elseif action and action ~= "" then
         SetBinding(bindingKey, action)
     else
         SetBinding(bindingKey)
     end
+    return true
 end
 
 applyDefaultBindingActionNow = function(bindingKey, action)
@@ -727,49 +765,57 @@ applyDefaultBindingActionNow = function(bindingKey, action)
         pendingDefaultBindingUpdate = true
         return false
     end
+    local changed
     if action and action ~= "" then
-        clearPermanentBindingsForAction(action, bindingKey)
+        changed = clearPermanentBindingsForAction(action, bindingKey)
     end
-    setPermanentBinding(bindingKey, action)
-    if SaveBindings then
-        SaveBindings(CHARACTER_BINDING_SET)
+    changed = setPermanentBinding(bindingKey, action) or changed
+    if changed and SaveBindings then
+        SaveBindings(ADDON.GetActiveBindingSet())
     end
     return true
 end
 
 clearPermanentBindingsForAction = function(action, targetBindingKey)
     if not action or action == "" or not GetBindingKey then
-        return
+        return false
     end
 
+    local changed
     local bindingKey1, bindingKey2 = GetBindingKey(action)
     if bindingKey1 and bindingKey1 ~= targetBindingKey then
         SetBinding(bindingKey1)
+        changed = true
     end
     if bindingKey2 and bindingKey2 ~= targetBindingKey then
         SetBinding(bindingKey2)
+        changed = true
     end
+    return changed
 end
 
-local function applyCurrentDefaultBindings()
+local function applyCurrentDefaultBindings(saveChanges)
     if InCombatLockdown() then
         pendingDefaultBindingUpdate = true
         return false
     end
 
+    local changed
     local spec = ADDON.GetCurrentSpecDB()
     for _, key in ipairs(getLayoutKeyList()) do
         local keyDefaults = spec.defaultBindings[key] or {}
         for _, variant in ipairs(ADDON.GetDefaultBindingKeysForKey(key)) do
             local action = keyDefaults[variant.modifier or "normal"]
             if action and action ~= "" then
-                clearPermanentBindingsForAction(action, variant.key)
+                changed = clearPermanentBindingsForAction(action, variant.key) or changed
             end
-            setPermanentBinding(variant.key, action)
+            if setPermanentBinding(variant.key, action) then
+                changed = true
+            end
         end
     end
-    if SaveBindings then
-        SaveBindings(CHARACTER_BINDING_SET)
+    if changed and saveChanges and SaveBindings then
+        SaveBindings(ADDON.GetActiveBindingSet())
     end
     pendingDefaultBindingUpdate = nil
     return true
@@ -778,9 +824,6 @@ end
 function ADDON.EnsureCharacterBindingSet()
     if InCombatLockdown() then
         return false
-    end
-    if SaveBindings then
-        SaveBindings(CHARACTER_BINDING_SET)
     end
     return true
 end
@@ -832,7 +875,7 @@ function ADDON.GetLayoutProfiles()
     profiles[2].className = "-"
     profiles[2].specText = "-"
 
-    for name, profile in pairs(DudesKeyMacrosDB.savedLayouts or {}) do
+    for name, profile in pairs(DudesFlexBindingsDB.savedLayouts or {}) do
         local copy = copyTable(profile)
         copy.id = name
         copy.name = copy.name or name
@@ -870,7 +913,7 @@ function ADDON.LoadLayout(layout)
     spec.bindings = copyTable(layout.bindings or {})
     spec.defaultBindings = copyTable(layout.defaultBindings or {})
 
-    applyCurrentDefaultBindings()
+    applyCurrentDefaultBindings(true)
 
     ADDON.ApplyRuntime()
     if ADDON.RefreshOverlay then
@@ -912,7 +955,7 @@ function ADDON.SaveAppliedLayoutProfile(name)
     end
 
     local layout = getCurrentAppliedLayout()
-    DudesKeyMacrosDB.savedLayouts[name] = makeProfile(name, layout, name, false)
+    DudesFlexBindingsDB.savedLayouts[name] = makeProfile(name, layout, name, false)
     printMessage("Saved layout '" .. name .. "'.")
     return true
 end
@@ -923,7 +966,7 @@ function ADDON.DeleteLayoutProfile(profileId)
     if not profile or profile.system then
         return false
     end
-    DudesKeyMacrosDB.savedLayouts[profileId] = nil
+    DudesFlexBindingsDB.savedLayouts[profileId] = nil
     return true
 end
 
@@ -932,7 +975,7 @@ function ADDON.CopyCurrentSpecToSharedProfile(profileName)
         return
     end
     ADDON.InitDB()
-    DudesKeyMacrosDB.sharedProfiles[profileName] = {
+    DudesFlexBindingsDB.sharedProfiles[profileName] = {
         bindings = copyTable(ADDON.GetCurrentSpecDB().bindings),
     }
     return true
@@ -940,7 +983,7 @@ end
 
 function ADDON.LoadSharedProfileToCurrentSpec(profileName)
     ADDON.InitDB()
-    local profile = profileName and DudesKeyMacrosDB.sharedProfiles[profileName]
+    local profile = profileName and DudesFlexBindingsDB.sharedProfiles[profileName]
     if not profile then
         return false
     end
@@ -962,16 +1005,13 @@ local function refreshForWorldState()
     ADDON.EnsureCharacterBindingSet()
     if not initialized then
         ensureOwnerFrame()
-        if ADDON.CreateOverlay then
-            ADDON.CreateOverlay()
-        end
         if ADDON.CreateMinimapButton then
             ADDON.CreateMinimapButton()
         end
         initialized = true
     end
     ADDON.ResetDraftToApplied()
-    applyCurrentDefaultBindings()
+    applyCurrentDefaultBindings(false)
     ADDON.ApplyRuntime()
     if ADDON.RefreshOverlay then
         ADDON.RefreshOverlay()
@@ -1014,16 +1054,23 @@ local function handleSlashCommand(text)
     end
 end
 
-SLASH_DUDESKEYMACROS1 = "/dkm"
-SLASH_DUDESKEYMACROS2 = "/dudeskeymacros"
-SlashCmdList["DUDESKEYMACROS"] = handleSlashCommand
+SLASH_DudesFlexBindings1 = "/dkm"
+SLASH_DudesFlexBindings2 = "/DudesFlexBindings"
+SlashCmdList["DudesFlexBindings"] = handleSlashCommand
 
-DudesUtils.EventHandler.Add("PLAYER_LOGIN", refreshForWorldState)
 DudesUtils.EventHandler.Add("PLAYER_ENTERING_WORLD", refreshForWorldState)
 DudesUtils.EventHandler.Add("ACTIVE_TALENT_GROUP_CHANGED", refreshForWorldState)
+DudesUtils.EventHandler.Add("UPDATE_BINDINGS", function()
+    if ADDON.RefreshEditorBindings then
+        ADDON.RefreshEditorBindings()
+    end
+    if ADDON.RefreshOverlay then
+        ADDON.RefreshOverlay()
+    end
+end)
 DudesUtils.EventHandler.Add("PLAYER_REGEN_ENABLED", function()
     if pendingDefaultBindingUpdate then
-        applyCurrentDefaultBindings()
+        applyCurrentDefaultBindings(true)
     end
     if pendingRuntimeUpdate then
         ADDON.ApplyRuntime()

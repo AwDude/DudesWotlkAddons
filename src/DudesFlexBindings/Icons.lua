@@ -1,4 +1,4 @@
-local ADDON = DudesKeyMacros
+﻿local ADDON = DudesFlexBindings
 
 local MODIFIER_ORDER = {
     normal = 1,

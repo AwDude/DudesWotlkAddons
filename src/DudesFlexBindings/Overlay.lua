@@ -1,4 +1,4 @@
-local ADDON = DudesKeyMacros
+﻿local ADDON = DudesFlexBindings
 
 local overlay
 local keyButtons = {}
@@ -14,10 +14,16 @@ local OUTER_PADDING = 28
 local PANEL_PADDING = 10
 local SECTION_GAP = 10
 local KEY_GAP = 8
-local CONTROL_HEIGHT = 18
+local KEY_CONTENT_PADDING = 8
+local ICON_LABEL_PADDING = 2
+local ICON_LABEL_MAX_LINES = 2
+local INTERFACE_ACTION_MAX_FONT_SIZE = 10
 local KEYBOARD_COLS = 13
 local MOUSE_COLS = 2
 local LAYOUT_ROWS = 5
+local BORDER_R, BORDER_G, BORDER_B = 0.32, 0.38, 0.46
+local HOVER_BORDER_R, HOVER_BORDER_G, HOVER_BORDER_B = 0.72, 0.86, 1
+local addBorderHover
 local keyLabels = {
     ESCAPE = "Esc",
     TAB = "Tab",
@@ -58,11 +64,66 @@ local function setBackdrop(frame, r, g, b, a)
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
         tile = true,
         tileSize = 16,
-        edgeSize = 12,
+        edgeSize = 16,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+    })
+    frame:SetBackdropColor(r, g, b, a)
+    frame:SetBackdropBorderColor(BORDER_R, BORDER_G, BORDER_B, 1)
+end
+
+local function setRoundedKeyBackdrop(frame, r, g, b, a)
+    frame:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 20,
         insets = { left = 3, right = 3, top = 3, bottom = 3 },
     })
     frame:SetBackdropColor(r, g, b, a)
-    frame:SetBackdropBorderColor(0.35, 0.45, 0.65, 1)
+    frame:SetBackdropBorderColor(BORDER_R, BORDER_G, BORDER_B, 1)
+end
+
+local function styleButton(button)
+    if not button then
+        return
+    end
+
+    if button.GetNormalTexture and button:GetNormalTexture() then
+        button:GetNormalTexture():SetTexture(nil)
+    end
+    if button.GetPushedTexture and button:GetPushedTexture() then
+        button:GetPushedTexture():SetTexture(nil)
+    end
+    if button.GetDisabledTexture and button:GetDisabledTexture() then
+        button:GetDisabledTexture():SetTexture(nil)
+    end
+    if button.SetHighlightTexture then
+        button:SetHighlightTexture("Interface\\Buttons\\WHITE8X8")
+        local highlight = button:GetHighlightTexture()
+        if highlight then
+            highlight:SetVertexColor(0, 0, 0, 0)
+        end
+    end
+    setBackdrop(button, 0.09, 0.105, 0.13, 1)
+    button:SetBackdropBorderColor(BORDER_R, BORDER_G, BORDER_B, 1)
+    addBorderHover(button)
+    if button:GetFontString() then
+        button:GetFontString():SetTextColor(0.86, 0.92, 1)
+    end
+end
+
+local function setRoundedRootBackdrop(frame, r, g, b, a)
+    frame:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    frame:SetBackdropColor(r, g, b, a)
+    frame:SetBackdropBorderColor(r, g, b, a)
 end
 
 local function createText(parent, size, justify)
@@ -79,11 +140,29 @@ local function createSolidTexture(parent, r, g, b)
     return texture
 end
 
+addBorderHover = function(frame)
+    if not frame or not frame.HookScript then
+        return
+    end
+    frame:HookScript("OnEnter", function(self)
+        if self.SetBackdropBorderColor then
+            self:SetBackdropBorderColor(HOVER_BORDER_R, HOVER_BORDER_G, HOVER_BORDER_B, 1)
+        end
+    end)
+    frame:HookScript("OnLeave", function(self)
+        if self.SetBackdropBorderColor then
+            self:SetBackdropBorderColor(BORDER_R, BORDER_G, BORDER_B, 1)
+        end
+    end)
+end
+
 local function fitButtonLabel(button, width)
-    local maxWidth = math.max(10, width - 12)
+    local maxWidth = math.max(10, width - KEY_CONTENT_PADDING * 2)
+    local measureWidth = math.max(256, width * 4)
     local label = button.label
     local text = button.labelText or ""
     local fontSize = 12
+    local minFontSize = 7
 
     if maxWidth < 38 then
         fontSize = 9
@@ -91,9 +170,6 @@ local function fitButtonLabel(button, width)
         fontSize = 10
     end
 
-    label:SetFont(STANDARD_TEXT_FONT, fontSize)
-    label:SetWidth(maxWidth)
-    label:SetHeight(fontSize + 3)
     if label.SetNonSpaceWrap then
         label:SetNonSpaceWrap(false)
     end
@@ -101,24 +177,40 @@ local function fitButtonLabel(button, width)
         label:SetWordWrap(false)
     end
 
-    label:SetText(text)
-    while label:GetStringWidth() > maxWidth and fontSize > 7 do
+    local function measureText(value, size)
+        label:SetFont(STANDARD_TEXT_FONT, size)
+        label:SetWidth(measureWidth)
+        label:SetHeight(size + 3)
+        label:SetText(value or "")
+        return label.GetStringWidth and label:GetStringWidth() or 0
+    end
+
+    while fontSize > minFontSize and measureText(text, fontSize) > maxWidth do
         fontSize = fontSize - 1
-        label:SetFont(STANDARD_TEXT_FONT, fontSize)
-        label:SetHeight(fontSize + 3)
     end
 
-    if label:GetStringWidth() <= maxWidth then
-        return
-    end
-
-    local clipped = text
-    while string.len(clipped) > 1 do
-        clipped = string.sub(clipped, 1, string.len(clipped) - 1)
-        label:SetText(clipped)
-        if label:GetStringWidth() <= maxWidth then
-            return
+    local fittedText = text
+    if measureText(fittedText, fontSize) > maxWidth then
+        local clipped = text
+        while string.len(clipped) > 1 and measureText(clipped, fontSize) > maxWidth do
+            clipped = string.sub(clipped, 1, string.len(clipped) - 1)
         end
+        fittedText = clipped
+    end
+
+    label:SetFont(STANDARD_TEXT_FONT, fontSize)
+    label:SetWidth(maxWidth)
+    label:SetHeight(fontSize + 3)
+    label:SetText(fittedText)
+    if label.GetStringWidth and label:GetStringWidth() > maxWidth then
+        local clipped = fittedText
+        while string.len(clipped) > 1 and label:GetStringWidth() > maxWidth do
+            clipped = string.sub(clipped, 1, string.len(clipped) - 1)
+            label:SetText(clipped)
+        end
+    end
+    if label.GetStringWidth and label:GetStringWidth() > maxWidth then
+        label:SetText("")
     end
 end
 
@@ -129,11 +221,10 @@ end
 
 local function fitInterfaceActionText(fontString, entry, width, height)
     local actionName = entry.actionName or ""
-    local fontSize = 10
-    local minFontSize = 7
+    local fontSize = INTERFACE_ACTION_MAX_FONT_SIZE
+    local minFontSize = 8
+    local measureWidth = math.max(256, width * 4)
 
-    fontString:SetWidth(width)
-    fontString:SetHeight(height)
     fontString:SetJustifyH("CENTER")
     if fontString.SetJustifyV then
         fontString:SetJustifyV("MIDDLE")
@@ -142,86 +233,211 @@ local function fitInterfaceActionText(fontString, entry, width, height)
         fontString:SetIndentedWordWrap(false)
     end
     if fontString.SetWordWrap then
-        fontString:SetWordWrap(true)
+        fontString:SetWordWrap(false)
     end
     if fontString.SetNonSpaceWrap then
-        fontString:SetNonSpaceWrap(true)
+        fontString:SetNonSpaceWrap(false)
     end
 
-    while fontSize >= minFontSize do
-        fontString:SetFont(STANDARD_TEXT_FONT, fontSize)
-        fontString:SetText(buildInterfaceActionText(entry, actionName))
-        if not fontString.GetStringHeight or fontString:GetStringHeight() <= height + 1 then
-            return
-        end
+    local function measureText(value, size)
+        fontString:SetFont(STANDARD_TEXT_FONT, size)
+        fontString:SetWidth(measureWidth)
+        fontString:SetHeight(height)
+        fontString:SetText(value or "")
+        return fontString.GetStringWidth and fontString:GetStringWidth() or 0
+    end
+
+    while fontSize > minFontSize and measureText(actionName, fontSize) > width do
         fontSize = fontSize - 1
     end
 
-    fontSize = minFontSize
-    fontString:SetFont(STANDARD_TEXT_FONT, fontSize)
-    if fontString.SetWordWrap then
-        fontString:SetWordWrap(false)
+    local fittedName = actionName
+    if measureText(fittedName, fontSize) > width then
+        while string.len(fittedName) > 1 and measureText(fittedName, fontSize) > width do
+            fittedName = string.sub(fittedName, 1, string.len(fittedName) - 1)
+        end
     end
-    fontString:SetText(buildInterfaceActionText(entry, actionName))
-    while fontString.GetStringWidth and fontString:GetStringWidth() > width and string.len(actionName) > 1 do
-        actionName = string.sub(actionName, 1, string.len(actionName) - 1)
-        fontString:SetText(buildInterfaceActionText(entry, actionName .. "..."))
+
+    fontString:SetFont(STANDARD_TEXT_FONT, fontSize)
+    fontString:SetWidth(width)
+    fontString:SetHeight(height)
+    fontString:SetText(buildInterfaceActionText(entry, fittedName))
+    if fontString.GetStringWidth and fontString:GetStringWidth() > width then
+        while string.len(fittedName) > 1 and fontString:GetStringWidth() > width do
+            fittedName = string.sub(fittedName, 1, string.len(fittedName) - 1)
+            fontString:SetText(buildInterfaceActionText(entry, fittedName))
+        end
     end
 end
 
 local function getBestIconGrid(count, areaWidth, areaHeight, gap)
-    local bestCols = 1
-    local bestRows = count
-    local bestSize = 0
-    local bestArea = 0
+    local candidates = {}
+    local maxSize = 0
     local targetRatio = areaHeight > 0 and areaWidth / areaHeight or 1
-    local bestRatioDiff = 999
 
     for cols = 1, count do
         local rows = math.ceil(count / cols)
         local iconSize = math.floor(math.min((areaWidth - (cols - 1) * gap) / cols, (areaHeight - (rows - 1) * gap) / rows))
+        local emptyCells = cols * rows - count
         local totalArea = cols * rows * iconSize * iconSize
         local ratioDiff = math.abs((cols / rows) - targetRatio)
-        if iconSize > bestSize or (iconSize == bestSize and (ratioDiff < bestRatioDiff or (ratioDiff == bestRatioDiff and totalArea > bestArea))) then
-            bestCols = cols
-            bestRows = rows
-            bestSize = iconSize
-            bestArea = totalArea
-            bestRatioDiff = ratioDiff
+        table.insert(candidates, {
+            cols = cols,
+            rows = rows,
+            iconSize = iconSize,
+            emptyCells = emptyCells,
+            totalArea = totalArea,
+            ratioDiff = ratioDiff,
+        })
+        if iconSize > maxSize then
+            maxSize = iconSize
         end
     end
 
-    return bestCols, bestRows, math.max(8, bestSize)
+    local best = candidates[1]
+    local minUsefulSize = maxSize * 0.92
+    for _, candidate in ipairs(candidates) do
+        if candidate.iconSize >= minUsefulSize then
+            if not best
+                or candidate.emptyCells < best.emptyCells
+                or (candidate.emptyCells == best.emptyCells and candidate.iconSize > best.iconSize)
+                or (candidate.emptyCells == best.emptyCells and candidate.iconSize == best.iconSize and candidate.ratioDiff < best.ratioDiff)
+                or (candidate.emptyCells == best.emptyCells and candidate.iconSize == best.iconSize and candidate.ratioDiff == best.ratioDiff and candidate.totalArea > best.totalArea) then
+                best = candidate
+            end
+        end
+    end
+
+    return best.cols, best.rows, math.max(8, best.iconSize)
 end
 
 local function setIconText(iconFrame, text, iconSize)
     text = text or ""
-    local minFontSize = 5
-    local fontSize = math.floor(iconSize * 0.55)
+    local minFontSize = 7
+    local fontSize = math.min(INTERFACE_ACTION_MAX_FONT_SIZE, math.floor(iconSize * 0.55))
+    local maxTextWidth = math.max(8, iconSize - ICON_LABEL_PADDING * 2)
+    local maxTextHeight = (fontSize + 2) * ICON_LABEL_MAX_LINES
+    local canWrap = string.find(text, "[%s%-_/%+%.:,;]", 1) and true or false
+    local measureWidth = math.max(256, iconSize * 8)
+
+    iconFrame.label:ClearAllPoints()
+    iconFrame.label:SetPoint("BOTTOM", iconFrame, "BOTTOM", 0, ICON_LABEL_PADDING)
+    iconFrame.label:SetWidth(maxTextWidth)
+    iconFrame.label:SetHeight(maxTextHeight)
+    iconFrame.label:SetJustifyH("CENTER")
+    if iconFrame.label.SetJustifyV then
+        iconFrame.label:SetJustifyV("BOTTOM")
+    end
+    if iconFrame.label.SetWordWrap then
+        iconFrame.label:SetWordWrap(canWrap)
+    end
+    if iconFrame.label.SetNonSpaceWrap then
+        iconFrame.label:SetNonSpaceWrap(false)
+    end
+
     if fontSize < minFontSize then
         iconFrame.label:SetText("")
         return
     end
 
-    fontSize = math.min(22, fontSize)
-    iconFrame.label:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
-    iconFrame.label:SetText(text)
-    while fontSize > minFontSize and iconFrame.label.GetStringWidth and iconFrame.label:GetStringWidth() > iconSize - 2 do
+    local function measureText(value, size)
+        iconFrame.label:SetFont(STANDARD_TEXT_FONT, size, "OUTLINE")
+        iconFrame.label:SetWidth(measureWidth)
+        iconFrame.label:SetHeight(100)
+        if iconFrame.label.SetWordWrap then
+            iconFrame.label:SetWordWrap(false)
+        end
+        if iconFrame.label.SetNonSpaceWrap then
+            iconFrame.label:SetNonSpaceWrap(false)
+        end
+        iconFrame.label:SetText(value or "")
+        return iconFrame.label.GetStringWidth and iconFrame.label:GetStringWidth() or 0
+    end
+
+    local function splitTextForWidth(value, size)
+        if not canWrap then
+            return nil
+        end
+
+        local bestText
+        local bestBalance
+        for i = 1, string.len(value) do
+            local char = string.sub(value, i, i)
+            if string.find(char, "[%s%-_/%+%.:,;]") then
+                local left
+                local right
+                if string.find(char, "%s") then
+                    left = string.sub(value, 1, i - 1)
+                    right = string.sub(value, i + 1)
+                else
+                    left = string.sub(value, 1, i)
+                    right = string.sub(value, i + 1)
+                end
+
+                if left ~= "" and right ~= "" then
+                    local leftWidth = measureText(left, size)
+                    local rightWidth = measureText(right, size)
+                    if leftWidth <= maxTextWidth and rightWidth <= maxTextWidth then
+                        local balance = math.abs(leftWidth - rightWidth)
+                        if not bestBalance or balance < bestBalance then
+                            bestText = left .. "\n" .. right
+                            bestBalance = balance
+                        end
+                    end
+                end
+            end
+        end
+
+        return bestText
+    end
+
+    local function fitText(value, size)
+        if measureText(value, size) <= maxTextWidth then
+            return value
+        end
+        return splitTextForWidth(value, size)
+    end
+
+    local fittedText = fitText(text, fontSize)
+    while fontSize > minFontSize and not fittedText do
         fontSize = fontSize - 1
-        iconFrame.label:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+        fittedText = fitText(text, fontSize)
     end
-    if iconFrame.label.GetStringWidth and iconFrame.label:GetStringWidth() > iconSize - 2 then
-        iconFrame.label:SetText("")
+
+    if not fittedText then
+        local shortened = text
+        while string.len(shortened) > 1 and not fittedText do
+            shortened = string.sub(shortened, 1, string.len(shortened) - 1)
+            fittedText = fitText(shortened, fontSize)
+        end
+        if not fittedText then
+            iconFrame.label:SetText("")
+            iconFrame.label:SetWidth(maxTextWidth)
+            iconFrame.label:SetHeight((fontSize + 2) * ICON_LABEL_MAX_LINES)
+            return
+        end
     end
+
+    maxTextHeight = (fontSize + 2) * ICON_LABEL_MAX_LINES
+    iconFrame.label:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+    iconFrame.label:SetWidth(maxTextWidth)
+    iconFrame.label:SetHeight(maxTextHeight)
+    if iconFrame.label.SetWordWrap then
+        iconFrame.label:SetWordWrap(false)
+    end
+    if iconFrame.label.SetNonSpaceWrap then
+        iconFrame.label:SetNonSpaceWrap(false)
+    end
+    iconFrame.label:SetText(fittedText)
 end
 
 local function layoutMacroIcons(button, width, height, titleHeight, actionTopY)
     local icons = button.macroIcons or {}
     local count = math.min(#icons, #(button.macroIconFrames or {}))
     local areaTop = titleHeight
-    local areaBottom = actionTopY and math.max(titleHeight + 4, actionTopY - 4) or (height - 8)
+    local areaBottom = actionTopY and math.max(titleHeight + 4, actionTopY - 4) or (height - KEY_CONTENT_PADDING)
     local areaHeight = math.max(1, areaBottom - areaTop - 4)
-    local areaWidth = math.max(1, width - 12)
+    local areaWidth = math.max(1, width - KEY_CONTENT_PADDING * 2)
 
     for i, iconFrame in ipairs(button.macroIconFrames) do
         local icon = icons[i]
@@ -234,14 +450,14 @@ local function layoutMacroIcons(button, width, height, titleHeight, actionTopY)
                 iconFrame:SetHeight(iconSize)
                 iconFrame:SetPoint("CENTER", button, "TOPLEFT", width / 2, -(areaTop + 2 + areaHeight / 2))
                 iconFrame.texture:SetTexture(icon.texture)
-                setIconText(iconFrame, icon.text, iconSize)
+                setIconText(iconFrame, icon.useName and icon.name or icon.text, iconSize)
                 iconFrame:Show()
             else
                 local gap = 2
                 local cols, rows, iconSize = getBestIconGrid(count, areaWidth, areaHeight, gap)
                 local totalWidth = cols * iconSize + (cols - 1) * gap
                 local totalHeight = rows * iconSize + (rows - 1) * gap
-                local startX = 6 + math.max(0, (areaWidth - totalWidth) / 2)
+                local startX = KEY_CONTENT_PADDING + math.max(0, (areaWidth - totalWidth) / 2)
                 local startY = -(areaTop + 2 + math.max(0, (areaHeight - totalHeight) / 2))
                 local col = (i - 1) % cols
                 local row = math.floor((i - 1) / cols)
@@ -250,7 +466,7 @@ local function layoutMacroIcons(button, width, height, titleHeight, actionTopY)
                 iconFrame:SetHeight(iconSize)
                 iconFrame:SetPoint("TOPLEFT", button, "TOPLEFT", startX + col * (iconSize + gap), startY - row * (iconSize + gap))
                 iconFrame.texture:SetTexture(icon.texture)
-                setIconText(iconFrame, icon.text, iconSize)
+                setIconText(iconFrame, icon.useName and icon.name or icon.text, iconSize)
                 iconFrame:Show()
             end
         else
@@ -259,6 +475,21 @@ local function layoutMacroIcons(button, width, height, titleHeight, actionTopY)
     end
 
     button.macroPlaceholder:Hide()
+end
+
+local function hideDynamicKeyContent(button)
+    for _, actionText in ipairs(button.interfaceActionTexts or {}) do
+        actionText:Hide()
+    end
+    for _, iconFrame in ipairs(button.macroIconFrames or {}) do
+        iconFrame:Hide()
+    end
+    if button.macroPlaceholder then
+        button.macroPlaceholder:Hide()
+    end
+    if button.conflictText then
+        button.conflictText:Hide()
+    end
 end
 
 local function getOverlaySettings()
@@ -294,7 +525,7 @@ local function getLayoutMetrics()
     local width = math.max(MIN_WIDTH, overlay:GetWidth() or DEFAULT_WIDTH)
     local height = math.max(MIN_HEIGHT, overlay:GetHeight() or DEFAULT_HEIGHT)
     local contentWidth = math.max(1, width - OUTER_PADDING * 2)
-    local contentHeight = math.max(1, height - OUTER_PADDING * 2 - CONTROL_HEIGHT)
+    local contentHeight = math.max(1, height - OUTER_PADDING * 2)
     local totalKeyGaps = (KEYBOARD_COLS - 1) * KEY_GAP + (MOUSE_COLS - 1) * KEY_GAP
     local totalPanelPadding = PANEL_PADDING * 4
     local keyWidth = (contentWidth - SECTION_GAP - totalPanelPadding - totalKeyGaps) / (KEYBOARD_COLS + MOUSE_COLS)
@@ -319,7 +550,7 @@ local function getLayoutMetrics()
     }
 end
 
-local function layoutKeyButton(button)
+local function layoutKeyButton(button, lightweight)
     local metrics = getLayoutMetrics()
     local def = button.layoutDef
     local col = def[4]
@@ -333,14 +564,23 @@ local function layoutKeyButton(button)
     button:SetHeight(height)
 
     button.label:ClearAllPoints()
-    button.label:SetPoint("TOPLEFT", button, "TOPLEFT", 6, -4)
+    button.label:SetPoint("TOPLEFT", button, "TOPLEFT", KEY_CONTENT_PADDING, -KEY_CONTENT_PADDING)
     button.label:SetJustifyH("LEFT")
+
+    if lightweight then
+        button.label:SetWidth(math.max(10, width - KEY_CONTENT_PADDING * 2))
+        button.label:SetHeight(16)
+        button.label:Show()
+        hideDynamicKeyContent(button)
+        return
+    end
+
     fitButtonLabel(button, width)
 
     local interfaceActions = button.interfaceActions or {}
     local rowCount = #interfaceActions
-    local titleHeight = 22
-    local bottomPadding = 8
+    local titleHeight = KEY_CONTENT_PADDING + 16
+    local bottomPadding = KEY_CONTENT_PADDING
     local lineGap = 2
     local maxLineHeight = 14
     local availableHeight = math.max(1, height - titleHeight - bottomPadding)
@@ -355,10 +595,10 @@ local function layoutKeyButton(button)
         local entry = interfaceActions[i]
         actionText:ClearAllPoints()
         if entry and entry.action then
-            actionText:SetPoint("TOPLEFT", button, "TOPLEFT", 5, startY - (i - 1) * (lineHeight + lineGap))
-            actionText:SetWidth(width - 10)
+            actionText:SetPoint("TOPLEFT", button, "TOPLEFT", KEY_CONTENT_PADDING, startY - (i - 1) * (lineHeight + lineGap))
+            actionText:SetWidth(width - KEY_CONTENT_PADDING * 2)
             actionText:SetHeight(lineHeight)
-            fitInterfaceActionText(actionText, entry, width - 10, lineHeight)
+            fitInterfaceActionText(actionText, entry, width - KEY_CONTENT_PADDING * 2, lineHeight)
             actionText:Show()
         else
             actionText:Hide()
@@ -366,12 +606,12 @@ local function layoutKeyButton(button)
     end
 
     button.conflictText:ClearAllPoints()
-    button.conflictText:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", 5, 4)
-    button.conflictText:SetPoint("RIGHT", button, "RIGHT", -5, 0)
+    button.conflictText:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", KEY_CONTENT_PADDING, KEY_CONTENT_PADDING)
+    button.conflictText:SetPoint("RIGHT", button, "RIGHT", -KEY_CONTENT_PADDING, 0)
 end
 
-local function layoutOverlay()
-    if not overlay or not overlay.closeButton then
+local function layoutOverlay(lightweight)
+    if not overlay or not overlay.closeButton or not overlay.settingsButton then
         return
     end
 
@@ -381,7 +621,7 @@ local function layoutOverlay()
     overlay.settingsButton:SetPoint("RIGHT", overlay.closeButton, "LEFT", -6, 0)
 
     for _, button in pairs(keyButtons) do
-        layoutKeyButton(button)
+        layoutKeyButton(button, lightweight)
     end
 
     if resizeGrip then
@@ -400,9 +640,9 @@ local function updateKeyButton(key, button)
     local interfaceActions = {}
     local modifierColors = {
         normal = "ffffff",
-        shift = "9dff9d",
-        ctrl = "fff28a",
-        alt = "ff9dff",
+        shift = "b8ffb8",
+        ctrl = "a8dcff",
+        alt = "ffc4ff",
     }
     for _, variant in ipairs(ADDON.GetDefaultBindingKeysForKey(key)) do
         local action = ADDON.GetDefaultBindingAction(variant.key)
@@ -427,9 +667,9 @@ local function updateKeyButton(key, button)
         if button.hasMacro and #(button.macroIcons or {}) == 0 then
             table.insert(interfaceActions, 1, {
                 modifier = "macro",
-                action = "__DUDESKEYMACROS_MACRO__",
-                actionName = "Makro",
-                color = "73ccff",
+                action = "__DudesFlexBindings_MACRO__",
+                actionName = "<< Makro >>",
+                color = "ff6b6b",
             })
         end
     end
@@ -440,7 +680,7 @@ local function updateKeyButton(key, button)
         button.conflictText:Hide()
     end
 
-    button:SetBackdropBorderColor(0, 0, 0, 1)
+    button:SetBackdropBorderColor(BORDER_R, BORDER_G, BORDER_B, 1)
 end
 
 local function createKeyButton(parent, def)
@@ -448,18 +688,18 @@ local function createKeyButton(parent, def)
     local button = CreateFrame("Button", nil, parent)
     button:SetFrameLevel(parent:GetFrameLevel() + 1)
     button.layoutDef = def
-    setBackdrop(button, 0.04, 0.05, 0.07, 1)
-    button:SetBackdropBorderColor(0, 0, 0, 1)
+    setRoundedKeyBackdrop(button, 0.085, 0.098, 0.12, 1)
     button:SetAlpha(1)
+    addBorderHover(button)
 
     button.solidBackground = button:CreateTexture(nil, "BACKGROUND")
-    button.solidBackground:SetPoint("TOPLEFT", button, "TOPLEFT", 3, -3)
-    button.solidBackground:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -3, 3)
-    button.solidBackground:SetTexture(0.04, 0.05, 0.07, 1)
+    button.solidBackground:SetPoint("TOPLEFT", button, "TOPLEFT", 5, -5)
+    button.solidBackground:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -5, 5)
+    button.solidBackground:SetTexture(0.085, 0.098, 0.12, 1)
 
     button.key = key
     button.label = createText(button, 12)
-    button.label:SetTextColor(1, 0.55, 0.05)
+    button.label:SetTextColor(1, 1, 1)
     button.labelText = def[2] or keyLabels[key] or key
     button.label:SetText(button.labelText)
 
@@ -477,8 +717,9 @@ local function createKeyButton(parent, def)
         iconFrame.texture = iconFrame:CreateTexture(nil, "ARTWORK")
         iconFrame.texture:SetAllPoints(iconFrame)
         iconFrame.texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-        iconFrame.label = createText(iconFrame, 8, "RIGHT")
-        iconFrame.label:SetPoint("BOTTOMRIGHT", iconFrame, "BOTTOMRIGHT", -1, 1)
+        iconFrame.label = createText(iconFrame, 8, "CENTER")
+        iconFrame.label:SetPoint("BOTTOM", iconFrame, "BOTTOM", 0, ICON_LABEL_PADDING)
+        iconFrame.label:SetJustifyH("CENTER")
         iconFrame.label:SetTextColor(1, 1, 1)
         iconFrame.label:SetShadowOffset(0, 0)
         iconFrame.label:SetShadowColor(0, 0, 0, 0)
@@ -506,31 +747,39 @@ end
 
 local function createHeader(parent)
     parent.closeButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    parent.closeButton:SetWidth(24)
-    parent.closeButton:SetHeight(22)
+    parent.closeButton:SetWidth(36)
+    parent.closeButton:SetHeight(30)
     parent.closeButton:SetFrameLevel(parent:GetFrameLevel() + 2)
     parent.closeButton:SetText("X")
+    styleButton(parent.closeButton)
     parent.closeButton:SetScript("OnClick", function()
         parent:Hide()
     end)
 
     parent.settingsButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    parent.settingsButton:SetWidth(24)
-    parent.settingsButton:SetHeight(22)
+    parent.settingsButton:SetWidth(36)
+    parent.settingsButton:SetHeight(30)
     parent.settingsButton:SetFrameLevel(parent:GetFrameLevel() + 2)
     parent.settingsButton:SetText("...")
+    styleButton(parent.settingsButton)
     parent.settingsButton:SetScript("OnClick", function()
         if ADDON.ToggleSettings then
             ADDON.ToggleSettings()
         end
     end)
     parent.settingsButton:SetScript("OnEnter", function(self)
+        if self.SetBackdropBorderColor then
+            self:SetBackdropBorderColor(HOVER_BORDER_R, HOVER_BORDER_G, HOVER_BORDER_B, 1)
+        end
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:AddLine("DudesKeyMacros")
+        GameTooltip:AddLine("DudesFlexBindings")
         GameTooltip:AddLine("Einstellungen", 1, 1, 1)
         GameTooltip:Show()
     end)
-    parent.settingsButton:SetScript("OnLeave", function()
+    parent.settingsButton:SetScript("OnLeave", function(self)
+        if self.SetBackdropBorderColor then
+            self:SetBackdropBorderColor(BORDER_R, BORDER_G, BORDER_B, 1)
+        end
         GameTooltip:Hide()
     end)
 
@@ -551,14 +800,17 @@ local function createResizeGrip(parent)
     resizeGrip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
     resizeGrip:RegisterForDrag("LeftButton")
     resizeGrip:SetScript("OnDragStart", function()
+        parent.isResizing = true
+        layoutOverlay(true)
         if parent.StartSizing then
             parent:StartSizing("BOTTOMRIGHT")
         end
     end)
     resizeGrip:SetScript("OnDragStop", function()
         parent:StopMovingOrSizing()
+        parent.isResizing = nil
         saveOverlayPlacement()
-        layoutOverlay()
+        layoutOverlay(false)
     end)
 end
 
@@ -568,13 +820,13 @@ local function registerOverlaySpecialFrame()
     end
 
     for _, frameName in ipairs(UISpecialFrames) do
-        if frameName == "DudesKeyMacrosOverlay" then
+        if frameName == "DudesFlexBindingsOverlay" then
             registeredSpecialFrame = true
             return
         end
     end
 
-    table.insert(UISpecialFrames, "DudesKeyMacrosOverlay")
+    table.insert(UISpecialFrames, "DudesFlexBindingsOverlay")
     registeredSpecialFrame = true
 end
 
@@ -583,7 +835,7 @@ function ADDON.CreateOverlay()
         return overlay
     end
 
-    overlay = CreateFrame("Frame", "DudesKeyMacrosOverlay", UIParent)
+    overlay = CreateFrame("Frame", "DudesFlexBindingsOverlay", UIParent)
     overlay:SetFrameStrata("MEDIUM")
     overlay:SetFrameLevel(100)
     overlay:EnableMouse(true)
@@ -602,16 +854,16 @@ function ADDON.CreateOverlay()
         self:StopMovingOrSizing()
         saveOverlayPlacement()
     end)
-    overlay:SetScript("OnSizeChanged", function()
-        layoutOverlay()
+    overlay:SetScript("OnSizeChanged", function(self)
+        layoutOverlay(self.isResizing)
     end)
-    setBackdrop(overlay, 0.02, 0.025, 0.035, 0.72)
+    setRoundedRootBackdrop(overlay, 0.02, 0.025, 0.035, 0.72)
     registerOverlaySpecialFrame()
 
-    loadOverlayPlacement()
     createHeader(overlay)
     createLayoutButtons(overlay)
     createResizeGrip(overlay)
+    loadOverlayPlacement()
     layoutOverlay()
 
     overlay:Hide()
