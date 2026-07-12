@@ -309,6 +309,20 @@ local function refreshBonusBarSettingsControls()
         setFrameEnabled(optionsPanel.showBonusBarBindingsCheckbox, enabled)
         showFrame(optionsPanel.showBonusBarBindingsCheckbox, enabled)
     end
+    if optionsPanel.showBonusBarTooltipsCheckbox then
+        optionsPanel.showBonusBarTooltipsCheckbox:SetChecked(settings.showBonusBarTooltips and true or false)
+        setFrameEnabled(optionsPanel.showBonusBarTooltipsCheckbox, enabled)
+        showFrame(optionsPanel.showBonusBarTooltipsCheckbox, enabled)
+    end
+    if optionsPanel.bonusBarBindingSizeControl then
+        optionsPanel.bonusBarBindingSizeControl.refresh()
+        setFrameEnabled(optionsPanel.bonusBarBindingSizeControl.decrease, enabled and settings.showBonusBarBindings)
+        setFrameEnabled(optionsPanel.bonusBarBindingSizeControl.increase, enabled and settings.showBonusBarBindings)
+        optionsPanel.bonusBarBindingSizeControl.text:SetAlpha(enabled and settings.showBonusBarBindings and 1 or 0.45)
+        optionsPanel.bonusBarBindingSizeControl.value:SetAlpha(enabled and settings.showBonusBarBindings and 1 or 0.45)
+        showFrame(optionsPanel.bonusBarBindingSizeControl, enabled and settings.showBonusBarBindings)
+        showFrame(optionsPanel.bonusBarBindingSizeControl.text, enabled and settings.showBonusBarBindings)
+    end
     if optionsPanel.characterInterfaceBindingsCheckbox and ADDON.IsCharacterBindingSetEnabled then
         optionsPanel.characterInterfaceBindingsCheckbox:SetChecked(ADDON.IsCharacterBindingSetEnabled())
     end
@@ -324,7 +338,10 @@ local function createCheckbox(parent, anchor, yOffset, label, getter, setter, af
     checkbox.text:SetPoint("LEFT", checkbox, "RIGHT", 2, 1)
     checkbox.text:SetText(label)
     checkbox:SetScript("OnClick", function(self)
-        setter(self:GetChecked() and true or false)
+        if setter(self:GetChecked() and true or false) == false then
+            checkbox.refresh()
+            return
+        end
         refreshBonusBarSettingsControls()
         if afterClick then
             afterClick(self)
@@ -498,7 +515,7 @@ local function createBonusAnchorSelector(parent, anchor, yOffset)
     selector.valueText:SetJustifyH("CENTER")
     selector.text = selector:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     selector.text:SetPoint("LEFT", selector, "RIGHT", 8, 1)
-    selector.text:SetText("Bonus-Bar Anker")
+    selector.text:SetText("Bonusleisten Anker")
     selector:SetScript("OnClick", function(self)
         showBonusAnchorSelector(self)
     end)
@@ -520,7 +537,7 @@ local function createBonusGrowthSelector(parent, anchor, yOffset)
     selector.valueText:SetJustifyH("CENTER")
     selector.text = selector:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     selector.text:SetPoint("LEFT", selector, "RIGHT", 8, 1)
-    selector.text:SetText("Bonus-Bar Wachstum")
+    selector.text:SetText("Bonusleisten Wachstum")
     selector:SetScript("OnClick", function(self)
         showBonusGrowthSelector(self)
     end)
@@ -529,6 +546,89 @@ local function createBonusGrowthSelector(parent, anchor, yOffset)
     end
     selector.refresh()
     return selector
+end
+
+local function createBindingSizeControl(parent, anchor, yOffset)
+    local control = CreateFrame("Frame", nil, parent)
+    control:SetWidth(118)
+    control:SetHeight(24)
+    control:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, yOffset)
+    control.text = createText(parent, 11)
+    control.text:SetPoint("LEFT", control, "RIGHT", 8, 1)
+    control.text:SetText("Textgröße")
+    control.value = createText(control, 11)
+    control.value:SetPoint("CENTER", control, "CENTER", 0, 1)
+    control.value:SetWidth(36)
+    control.value:SetJustifyH("CENTER")
+
+    control.decrease = CreateFrame("Button", nil, control)
+    control.decrease:SetWidth(24)
+    control.decrease:SetHeight(22)
+    control.decrease:SetPoint("LEFT", control, "LEFT", 0, 0)
+    styleButton(control.decrease)
+    control.decrease.label = createText(control.decrease, 12)
+    control.decrease.label:SetAllPoints(control.decrease)
+    control.decrease.label:SetJustifyH("CENTER")
+    control.decrease.label:SetText("-")
+
+    control.increase = CreateFrame("Button", nil, control)
+    control.increase:SetWidth(24)
+    control.increase:SetHeight(22)
+    control.increase:SetPoint("RIGHT", control, "RIGHT", 0, 0)
+    styleButton(control.increase)
+    control.increase.label = createText(control.increase, 12)
+    control.increase.label:SetAllPoints(control.increase)
+    control.increase.label:SetJustifyH("CENTER")
+    control.increase.label:SetText("+")
+
+    local function adjust(delta)
+        local settings = ADDON.GetSettings()
+        settings.bonusBarBindingFontSize = math.max(7, math.min(16, (settings.bonusBarBindingFontSize or 10) + delta))
+        control.refresh()
+        if ADDON.RefreshBonusBar then
+            ADDON.RefreshBonusBar()
+        end
+        if ADDON.RefreshEditorBindings then
+            ADDON.RefreshEditorBindings()
+        end
+    end
+    control.decrease:SetScript("OnClick", function()
+        adjust(-1)
+    end)
+    control.increase:SetScript("OnClick", function()
+        adjust(1)
+    end)
+    control.refresh = function()
+        control.value:SetText(tostring(ADDON.GetSettings().bonusBarBindingFontSize or 10))
+    end
+    control.refresh()
+    return control
+end
+
+local function showDisableCharacterBindingsDialog(onAccept, onCancel)
+    StaticPopupDialogs["DUDES_FLEX_BINDINGS_DISABLE_CHARACTER_BINDINGS"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_DISABLE_CHARACTER_BINDINGS"] or {
+        text = "Charakterspezifische Interface Belegungen deaktivieren?\n\nAlle aktuellen charakterspezifischen Interface Belegungen gehen verloren.\n\nMakros und Bonusleisten-Belegungen können deaktiviert werden, wenn danach eine Interface-Aktion auf derselben Taste liegt.",
+        button1 = "Deaktivieren",
+        button2 = "Abbrechen",
+        OnAccept = function(self)
+            if self.data and self.data.onAccept then
+                self.data.onAccept()
+            end
+        end,
+        OnCancel = function(self)
+            if self.data and self.data.onCancel then
+                self.data.onCancel()
+            end
+        end,
+        timeout = 0,
+        whileDead = true,
+        hideOnEscape = true,
+        preferredIndex = 3,
+    }
+    StaticPopup_Show("DUDES_FLEX_BINDINGS_DISABLE_CHARACTER_BINDINGS", nil, nil, {
+        onAccept = onAccept,
+        onCancel = onCancel,
+    })
 end
 
 local function raiseSettingsPopup(popup)
@@ -552,7 +652,7 @@ local function showSaveLayoutDialog()
             if ADDON.SaveAppliedLayoutProfile and ADDON.SaveAppliedLayoutProfile(name) then
                 refreshLayoutRows()
             else
-                DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffDudesFlexBindings:|r Layout name must be unique.")
+                DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffDudesFlexBindings:|r Layout-Name muss eindeutig sein.")
             end
         end,
         OnShow = function(self)
@@ -582,7 +682,7 @@ local function showLoadLayoutDialog(profileId, profileName)
     end
 
     StaticPopupDialogs["DUDES_FLEX_BINDINGS_LOAD_LAYOUT_SETTINGS"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_LOAD_LAYOUT_SETTINGS"] or {
-        text = "Layout '%s' laden?\n\nDieses Layout ersetzt alle aktuellen DudesFlexBindings-Makros und Interface-Bindings des aktiven Specs.\n\nMöchtest du wirklich fortfahren?",
+        text = "Layout '%s' laden?\n\nDieses Layout ersetzt alle aktuellen DudesFlexBindings-Makros und Interface-Belegungen des aktiven Specs.\n\nMöchtest du wirklich fortfahren?",
         button1 = "Laden",
         button2 = "Abbrechen",
         OnAccept = function(self)
@@ -665,11 +765,11 @@ local function createOptionsPanel()
 
     local title = createText(content, 18)
     title:SetPoint("TOPLEFT", content, "TOPLEFT", 16, -16)
-    title:SetText("DudesFlexBindings")
+    title:SetText("Dude's Flexible Bindings")
 
     local subtitle = createText(content, 11)
     subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
-    subtitle:SetText("Character and spec specific key macros.")
+    subtitle:SetText("Einheitliche Interface, Makro und Bonusleisten Belegungen")
     subtitle:SetTextColor(0.8, 0.8, 0.8)
 
     optionsPanel.minimapCheckbox = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
@@ -679,7 +779,7 @@ local function createOptionsPanel()
     styleButton(optionsPanel.minimapCheckbox)
     optionsPanel.minimapCheckbox.text = optionsPanel.minimapCheckbox:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     optionsPanel.minimapCheckbox.text:SetPoint("LEFT", optionsPanel.minimapCheckbox, "RIGHT", 2, 1)
-    optionsPanel.minimapCheckbox.text:SetText("Show minimap button")
+    optionsPanel.minimapCheckbox.text:SetText("Minimap Button anzeigen")
     optionsPanel.minimapCheckbox:SetScript("OnClick", function(self)
         ADDON.GetSettings().showMinimapButton = self:GetChecked() and true or false
         refreshMinimapButton()
@@ -688,8 +788,17 @@ local function createOptionsPanel()
     optionsPanel.characterInterfaceBindingsCheckbox = createCheckbox(content, optionsPanel.minimapCheckbox, -4, "Charakterspezifische Interface Belegungen", function()
         return ADDON.IsCharacterBindingSetEnabled and ADDON.IsCharacterBindingSetEnabled()
     end, function(value)
-        if ADDON.SetCharacterBindingSetEnabled and not ADDON.SetCharacterBindingSetEnabled(value) and optionsPanel.characterInterfaceBindingsCheckbox then
-            optionsPanel.characterInterfaceBindingsCheckbox:SetChecked(ADDON.IsCharacterBindingSetEnabled and ADDON.IsCharacterBindingSetEnabled() or false)
+        if value == false and ADDON.IsCharacterBindingSetEnabled and ADDON.IsCharacterBindingSetEnabled() then
+            showDisableCharacterBindingsDialog(function()
+                ADDON.SetCharacterBindingSetEnabled(false)
+                ADDON.RefreshSettings()
+            end, function()
+                ADDON.RefreshSettings()
+            end)
+            return false
+        end
+        if ADDON.SetCharacterBindingSetEnabled and not ADDON.SetCharacterBindingSetEnabled(value) then
+            return false
         end
     end, function()
         if ADDON.RefreshEditorBindings then
@@ -769,29 +878,49 @@ local function createOptionsPanel()
 
     local bonusTitle = createText(content, 15)
     bonusTitle:SetPoint("TOPLEFT", layoutRows[8], "BOTTOMLEFT", 0, -18)
-    bonusTitle:SetText("Bonus-Bar")
+    bonusTitle:SetText("Bonusleiste")
     optionsPanel.bonusTitle = bonusTitle
 
-    optionsPanel.bonusBarCheckbox = createCheckbox(content, bonusTitle, -8, "Bonus-Bar anzeigen", function()
+    optionsPanel.bonusBarCheckbox = createCheckbox(content, bonusTitle, -8, "Bonusleiste anzeigen", function()
         return ADDON.GetSettings().showBonusBar
     end, function(value)
         ADDON.GetSettings().showBonusBar = value
+        if ADDON.RefreshEditorBindings then
+            ADDON.RefreshEditorBindings()
+        end
     end)
 
-    optionsPanel.alignBonusBarCheckbox = createCheckbox(content, optionsPanel.bonusBarCheckbox, -2, "Bonus-Bar ausrichten", function()
+    optionsPanel.alignBonusBarCheckbox = createCheckbox(content, optionsPanel.bonusBarCheckbox, -2, "Bonusleiste ausrichten", function()
         return ADDON.GetSettings().alignBonusBar
     end, function(value)
         ADDON.GetSettings().alignBonusBar = value
+        if ADDON.RefreshEditorBindings then
+            ADDON.RefreshEditorBindings()
+        end
     end)
 
     optionsPanel.bonusBarAnchorSelector = createBonusAnchorSelector(content, optionsPanel.alignBonusBarCheckbox, -2)
 
     optionsPanel.bonusBarGrowthSelector = createBonusGrowthSelector(content, optionsPanel.bonusBarAnchorSelector, -2)
 
-    optionsPanel.showBonusBarBindingsCheckbox = createCheckbox(content, optionsPanel.bonusBarGrowthSelector, -2, "Bonus-Bar Bindings anzeigen", function()
+    optionsPanel.showBonusBarBindingsCheckbox = createCheckbox(content, optionsPanel.bonusBarGrowthSelector, -2, "Bonusleisten Belegungen anzeigen", function()
         return ADDON.GetSettings().showBonusBarBindings
     end, function(value)
         ADDON.GetSettings().showBonusBarBindings = value
+        if ADDON.RefreshEditorBindings then
+            ADDON.RefreshEditorBindings()
+        end
+    end)
+
+    optionsPanel.bonusBarBindingSizeControl = createBindingSizeControl(content, optionsPanel.showBonusBarBindingsCheckbox, -2)
+
+    optionsPanel.showBonusBarTooltipsCheckbox = createCheckbox(content, optionsPanel.bonusBarBindingSizeControl, -2, "Bonusleisten Tooltips anzeigen", function()
+        return ADDON.GetSettings().showBonusBarTooltips
+    end, function(value)
+        ADDON.GetSettings().showBonusBarTooltips = value
+        if ADDON.RefreshEditorBindings then
+            ADDON.RefreshEditorBindings()
+        end
     end)
 
     optionsPanel:SetScript("OnShow", function()

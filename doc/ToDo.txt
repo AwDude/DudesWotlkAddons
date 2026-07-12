@@ -3,16 +3,4 @@
     - maybe with AK 10 / 25 auto mode?
 
 DudesKeyMakros
-- wenn BonusBar aktiv: die icons sollen den typischen abgerundeten rahmen haben, den wir auch sonst überall für UI Elemente benutzen
-- In den Bonusbar Einstellungen (unter einstellungen & bonusbar editor)
-    - Die Checkbox "Bonus-Bar Bindings anzeigen" soll "Bonus-Bar Belegungen anzeigen" heißen
-    - füge eine option zum anpassen der binding text größe hinzu, wenn checkbox aktiviert
-- wenn bonusbar ausrichten aktiv:
-    - füge neben die "vertikal zentrieren" und "horizontal zentrieren" buttons noch einen "Ausrichten ausblenden" button hinzu
-    - denke daran es in sync mit der checkbox unter bonusbar editor und einstellungen zu halten
-- wenn man den haken aus der checkbox "Charakterspezifische Interface Belegungen" entfernen will
-    - sollte man ein confirmation dialog bekommen
-    - denn dadurch gehen alle aktuellen interface belegungen verloren
-    - und manche makros / bonus-bar bindings werden eventuell deaktiviert, da danach eine interface aktion darauf liegen kann
-    - zeige diese infos im confirmation dialog an
-    - stelle sicher, dass der code das aktuell auch korrekt alles abfängt und richtig setzt
+- bonusleisten tasten klickbar machen als option in den einstellungen (checkbox)

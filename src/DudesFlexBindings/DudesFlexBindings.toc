@@ -1,6 +1,6 @@
 ﻿## Interface: 30300
-## Title: Dude's Flex Bindings
-## Notes: Character and spec specific macro keybindings using secure action buttons.
+## Title: Dude's Flexible Bindings
+## Notes: Einheitliche Interface, Makro und Bonusleisten Belegungen
 ## Version: 0.1
 ## Author: Dude
 ## SavedVariables: DudesFlexBindingsDB

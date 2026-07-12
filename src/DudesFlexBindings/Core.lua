@@ -41,6 +41,7 @@ local previousErrorHandler
 local draftLayout
 local isOwnBindingAction
 local applyDefaultBindingActionNow
+local dominosPossessBarHooked
 
 local BLIZZARD_DEFAULT_BINDINGS = {
     ESCAPE = { normal = "TOGGLEGAMEMENU" },
@@ -265,6 +266,12 @@ function ADDON.InitDB()
     if character.settings.showBonusBarBindings == nil then
         character.settings.showBonusBarBindings = true
     end
+    if character.settings.showBonusBarTooltips == nil then
+        character.settings.showBonusBarTooltips = true
+    end
+    if character.settings.bonusBarBindingFontSize == nil then
+        character.settings.bonusBarBindingFontSize = 10
+    end
     character.settings.bonusBar = character.settings.bonusBar or {}
     character.specs = character.specs or {}
     ensureSpec(character, 1)
@@ -297,9 +304,13 @@ function ADDON.SetCharacterBindingSetEnabled(enabled)
         return false
     end
 
+    local spec = ADDON.GetCurrentSpecDB()
     if LoadBindings then
         local targetBindingSet = enabled and CHARACTER_BINDING_SET or ACCOUNT_BINDING_SET
         LoadBindings(targetBindingSet)
+        spec.defaultBindings = {}
+        spec.defaultBindingsInitialized = nil
+        captureLiveDefaultBindings(spec)
         if SaveBindings then
             SaveBindings(targetBindingSet)
         end
@@ -314,6 +325,7 @@ function ADDON.SetCharacterBindingSetEnabled(enabled)
     if ADDON.RefreshEditorBindings then
         ADDON.RefreshEditorBindings()
     end
+    ADDON.ApplyRuntime()
     return true
 end
 
@@ -418,6 +430,58 @@ local function normalizeBonusSlot(slot)
         return nil
     end
     return math.floor(slot)
+end
+
+local function getDominosPossessBarId()
+    if IsAddOnLoaded and not IsAddOnLoaded("Dominos") then
+        return nil
+    end
+    if not Dominos or not Dominos.GetPossessBar then
+        return nil
+    end
+    local ok, possessBar = pcall(Dominos.GetPossessBar, Dominos)
+    if ok and possessBar and possessBar.id then
+        return tonumber(possessBar.id)
+    end
+    return nil
+end
+
+local function getDominosButtonName(actionId)
+    actionId = tonumber(actionId)
+    if not actionId or actionId < 1 then
+        return nil
+    end
+    if actionId <= 12 then
+        return "ActionButton" .. tostring(actionId)
+    elseif actionId <= 24 then
+        return "BonusActionButton" .. tostring(actionId - 12)
+    elseif actionId <= 36 then
+        return "MultiBarRightButton" .. tostring(actionId - 24)
+    elseif actionId <= 48 then
+        return "MultiBarLeftButton" .. tostring(actionId - 36)
+    elseif actionId <= 60 then
+        return "MultiBarBottomRightButton" .. tostring(actionId - 48)
+    elseif actionId <= 72 then
+        return "MultiBarBottomLeftButton" .. tostring(actionId - 60)
+    end
+    return "DominosActionButton" .. tostring(actionId - 72)
+end
+
+function ADDON.GetBonusBarButtonName(slot)
+    slot = normalizeBonusSlot(slot)
+    if not slot then
+        return nil
+    end
+
+    local possessBarId = getDominosPossessBarId()
+    if possessBarId then
+        local buttonName = getDominosButtonName((possessBarId - 1) * BONUS_BAR_SLOT_COUNT + slot)
+        if buttonName and _G[buttonName] then
+            return buttonName
+        end
+    end
+
+    return "BonusActionButton" .. tostring(slot)
 end
 
 function ADDON.GetBonusBarSlotCount()
@@ -548,7 +612,7 @@ function ADDON.GetDefaultBindingKeysForKey(key)
     return {
         { label = "Normal", key = key, modifier = "normal" },
         { label = "Shift", key = "SHIFT-" .. key, modifier = "shift" },
-        { label = "Ctrl", key = "CTRL-" .. key, modifier = "ctrl" },
+        { label = "Strg", key = "CTRL-" .. key, modifier = "ctrl" },
         { label = "Alt", key = "ALT-" .. key, modifier = "alt" },
     }
 end
@@ -686,7 +750,7 @@ function ADDON.GetAvailableBindingActions(filter)
     filter = string.lower(filter or "")
 
     local toggleName = ADDON.GetBindingDisplayName(TOGGLE_BINDING_ACTION)
-    if filter == "" or string.find(string.lower(toggleName), filter, 1, true) then
+    if filter == "" or string.find(string.lower(toggleName), filter, 1, true) or string.find(string.lower(TOGGLE_BINDING_ACTION), filter, 1, true) then
         table.insert(actions, {
             command = TOGGLE_BINDING_ACTION,
             name = toggleName,
@@ -717,6 +781,24 @@ function ADDON.GetAvailableBindingActions(filter)
         return (a.name or a.command) < (b.name or b.command)
     end)
     return actions
+end
+
+function ADDON.ClearAllBindingsForKey(key)
+    if not key then
+        return false
+    end
+    local spec = ADDON.GetCurrentSpecDB()
+    spec.bindings[key] = nil
+    spec.defaultBindings[key] = nil
+    spec.bonusBarBindings[key] = nil
+    ADDON.ApplyRuntime()
+    if ADDON.RefreshOverlay then
+        ADDON.RefreshOverlay()
+    end
+    if ADDON.RefreshBonusBar then
+        ADDON.RefreshBonusBar()
+    end
+    return true
 end
 
 function ADDON.ClearDefaultBindingsForKey(key)
@@ -783,6 +865,20 @@ local function ensureRuntimeButton(key)
     button:SetAttribute("type1", "macro")
     button:SetScript("PreClick", function(self)
         ADDON.executingMacroKey = self.dkmKey
+        if ADDON.IsBonusBarActive and ADDON.IsBonusBarActive() and ADDON.PlayBonusBarPress then
+            local modifier = "normal"
+            if IsShiftKeyDown and IsShiftKeyDown() then
+                modifier = "shift"
+            elseif IsControlKeyDown and IsControlKeyDown() then
+                modifier = "ctrl"
+            elseif IsAltKeyDown and IsAltKeyDown() then
+                modifier = "alt"
+            end
+            local bonusSlot = self.dkmBonusBarBindings and self.dkmBonusBarBindings[modifier]
+            if normalizeBonusSlot(bonusSlot) then
+                ADDON.PlayBonusBarPress(bonusSlot)
+            end
+        end
     end)
     button:SetScript("PostClick", function()
         ADDON.executingMacroKey = nil
@@ -799,8 +895,9 @@ local function buildBonusBarMacro(slot, macrotext)
         return macrotext
     end
 
+    local clickTarget = ADDON.GetBonusBarButtonName and ADDON.GetBonusBarButtonName(slot) or ("BonusActionButton" .. tostring(slot))
     local lines = {
-        "/click [vehicleui][bonusbar:5] BonusActionButton" .. tostring(slot),
+        "/click [vehicleui][bonusbar:5] " .. clickTarget,
         "/stopmacro [vehicleui]",
         "/stopmacro [bonusbar:5]",
     }
@@ -812,6 +909,7 @@ end
 
 local function setRuntimeVariantAttributes(button, binding, bonusBindings)
     local macrotext = binding and binding.macrotext or ""
+    button.dkmBonusBarBindings = bonusBindings or {}
     local variants = {
         normal = "",
         shift = "shift-",
@@ -844,7 +942,7 @@ function ADDON.ApplyRuntime()
 
     if InCombatLockdown() then
         ADDON.QueueRuntimeUpdate()
-        printMessage("Runtime update is queued until combat ends.")
+        printMessage("Runtime-Aktualisierung wird bis nach dem Kampf verschoben.")
         return false
     end
 
@@ -1009,7 +1107,7 @@ end
 
 function ADDON.ApplyDraftLayout()
     if InCombatLockdown() then
-        printMessage("Runtime update is queued until combat ends.")
+        printMessage("Runtime-Aktualisierung wird bis nach dem Kampf verschoben.")
         ADDON.QueueRuntimeUpdate()
         return false
     end
@@ -1202,6 +1300,29 @@ local function refreshForWorldState()
     end
 end
 
+local function refreshBonusBarRoute()
+    ADDON.ApplyRuntime()
+    if ADDON.QueueBonusBarRefresh then
+        ADDON.QueueBonusBarRefresh()
+    elseif ADDON.RefreshBonusBar then
+        ADDON.RefreshBonusBar()
+    end
+end
+
+local function hookDominosPossessBar()
+    if dominosPossessBarHooked or not Dominos or not Dominos.SetPossessBar or not hooksecurefunc then
+        return
+    end
+
+    local ok = pcall(hooksecurefunc, Dominos, "SetPossessBar", refreshBonusBarRoute)
+    if ok then
+        dominosPossessBarHooked = true
+        if initialized then
+            refreshBonusBarRoute()
+        end
+    end
+end
+
 local function getFirstArgument(text)
     text = text or ""
     text = string.gsub(text, "^%s+", "")
@@ -1243,6 +1364,8 @@ SLASH_DudesFlexBindings2 = "/DudesFlexBindings"
 SlashCmdList["DudesFlexBindings"] = handleSlashCommand
 
 DudesUtils.EventHandler.Add("PLAYER_ENTERING_WORLD", refreshForWorldState)
+DudesUtils.EventHandler.Add("PLAYER_LOGIN", hookDominosPossessBar)
+DudesUtils.EventHandler.Add("ADDON_LOADED", hookDominosPossessBar)
 DudesUtils.EventHandler.Add("ACTIVE_TALENT_GROUP_CHANGED", refreshForWorldState)
 DudesUtils.EventHandler.Add("UPDATE_BINDINGS", function()
     if ADDON.RefreshEditorBindings then
