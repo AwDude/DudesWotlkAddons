@@ -24,6 +24,12 @@ local LAYOUT_ROWS = 5
 local BORDER_R, BORDER_G, BORDER_B = 0.32, 0.38, 0.46
 local HOVER_BORDER_R, HOVER_BORDER_G, HOVER_BORDER_B = 0.72, 0.86, 1
 local addBorderHover
+local MODIFIER_COLORS = {
+    normal = "ffffff",
+    shift = "b8ffb8",
+    ctrl = "a8dcff",
+    alt = "ffc4ff",
+}
 local keyLabels = {
     ESCAPE = "Esc",
     TAB = "Tab",
@@ -566,11 +572,20 @@ local function layoutKeyButton(button, lightweight)
     button.label:ClearAllPoints()
     button.label:SetPoint("TOPLEFT", button, "TOPLEFT", KEY_CONTENT_PADDING, -KEY_CONTENT_PADDING)
     button.label:SetJustifyH("LEFT")
+    button.bonusBarText:ClearAllPoints()
+    button.bonusBarText:SetPoint("TOPRIGHT", button, "TOPRIGHT", -KEY_CONTENT_PADDING, -KEY_CONTENT_PADDING - 1)
+    button.bonusBarText:SetWidth(math.max(10, width - KEY_CONTENT_PADDING * 2))
+    button.bonusBarText:SetHeight(12)
+    button.bonusBarText:SetFont(STANDARD_TEXT_FONT, 9)
+    button.bonusBarText:SetJustifyH("RIGHT")
 
     if lightweight then
         button.label:SetWidth(math.max(10, width - KEY_CONTENT_PADDING * 2))
         button.label:SetHeight(16)
         button.label:Show()
+        if (button.bonusBarText:GetText() or "") ~= "" then
+            button.bonusBarText:Show()
+        end
         hideDynamicKeyContent(button)
         return
     end
@@ -638,12 +653,6 @@ local function updateKeyButton(key, button)
     local macrotext = binding and binding.macrotext or ""
     local conflicts = ADDON.GetConflicts(key)
     local interfaceActions = {}
-    local modifierColors = {
-        normal = "ffffff",
-        shift = "b8ffb8",
-        ctrl = "a8dcff",
-        alt = "ffc4ff",
-    }
     for _, variant in ipairs(ADDON.GetDefaultBindingKeysForKey(key)) do
         local action = ADDON.GetDefaultBindingAction(variant.key)
         if action and action ~= "" then
@@ -653,7 +662,7 @@ local function updateKeyButton(key, button)
                 modifier = modifier,
                 action = action,
                 actionName = actionName,
-                color = modifierColors[modifier] or modifierColors.normal,
+                color = MODIFIER_COLORS[modifier] or MODIFIER_COLORS.normal,
             })
         end
     end
@@ -674,6 +683,22 @@ local function updateKeyButton(key, button)
         end
     end
     button.interfaceActions = interfaceActions
+    local bonusParts = {}
+    local bonusBindings = ADDON.GetBonusBarBindings and ADDON.GetBonusBarBindings(key) or {}
+    for _, variant in ipairs(ADDON.GetDefaultBindingKeysForKey(key)) do
+        local modifier = variant.modifier or "normal"
+        local slot = bonusBindings[modifier]
+        if slot then
+            table.insert(bonusParts, "|cff" .. (MODIFIER_COLORS[modifier] or MODIFIER_COLORS.normal) .. tostring(slot) .. "|r")
+        end
+    end
+    if #bonusParts > 0 then
+        button.bonusBarText:SetText(table.concat(bonusParts, " "))
+        button.bonusBarText:Show()
+    else
+        button.bonusBarText:SetText("")
+        button.bonusBarText:Hide()
+    end
     if #conflicts > 0 then
         button.conflictText:Hide()
     else
@@ -702,6 +727,10 @@ local function createKeyButton(parent, def)
     button.label:SetTextColor(1, 1, 1)
     button.labelText = def[2] or keyLabels[key] or key
     button.label:SetText(button.labelText)
+
+    button.bonusBarText = createText(button, 9, "RIGHT")
+    button.bonusBarText:SetTextColor(1, 1, 1)
+    button.bonusBarText:Hide()
 
     button.interfaceActionTexts = {}
     for i = 1, 5 do

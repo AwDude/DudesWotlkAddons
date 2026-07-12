@@ -7,6 +7,7 @@ local selectedIcons = {}
 local iconMatrix
 local selectedMatrixCellKey
 local interfaceRows = {}
+local bonusBarRows = {}
 local actionButtons = {}
 local suggestionButtons = {}
 local selectedIconButtons = {}
@@ -25,10 +26,13 @@ local inventoryItemClickHooked
 local companionClickHooked
 local pickerBindingKey
 local pendingActionMove
+local pendingBonusBarMove
 local refreshSuggestions
 local refreshMacroLockState
 local setEditorMode
 local refreshActionPicker
+local refreshBonusBarRows
+local refreshBonusBarEditorSettingsControls
 local showFrame
 local saveMacroDraft
 local editorMode = "interface"
@@ -36,7 +40,9 @@ local suppressMacroSave
 local suppressIconSave
 local suppressIconScroll
 local macroDirty
-local characterBindingSetEnabledOverride
+local bonusBarSelectorPopup
+local bonusAnchorSelectorPopup
+local bonusGrowthSelectorPopup
 
 local EDITOR_FRAME_LEVEL = 40
 local PICKER_FRAME_LEVEL = 80
@@ -44,7 +50,30 @@ local ICON_ROW_START_Y = -294
 local ICON_ROW_STEP = 34
 local ICON_SEARCH_GAP = 10
 local ICON_SUGGESTION_GAP = 34
+local SECTION_TITLE_SIZE = 15
+local SECTION_TITLE_Y = -108
+local SECTION_CONTENT_Y = -138
+local BINDING_ROW_HEIGHT = 34
+local BINDING_ROW_STEP = 35
 local MACRO_LOCK_WARNING_TEXT = "Makro deaktiviert: Die Haupttaste ist als Interface-Aktion gebunden"
+local BONUS_BAR_LOCK_WARNING_TEXT = "Mit Interface-Aktion belegt"
+local BONUS_ANCHOR_OPTIONS = {
+    { value = "topLeft", text = "Oben links" },
+    { value = "top", text = "Oben" },
+    { value = "topRight", text = "Oben rechts" },
+    { value = "left", text = "Links" },
+    { value = "center", text = "Zentriert" },
+    { value = "right", text = "Rechts" },
+    { value = "bottomLeft", text = "Unten links" },
+    { value = "bottom", text = "Unten" },
+    { value = "bottomRight", text = "Unten rechts" },
+}
+local BONUS_GROWTH_OPTIONS = {
+    { value = "right", text = "Nach rechts" },
+    { value = "down", text = "Nach unten" },
+    { value = "left", text = "Nach links" },
+    { value = "up", text = "Nach oben" },
+}
 local BORDER_R, BORDER_G, BORDER_B = 0.32, 0.38, 0.46
 local HOVER_BORDER_R, HOVER_BORDER_G, HOVER_BORDER_B = 0.72, 0.86, 1
 local MODIFIER_COLORS = {
@@ -91,23 +120,6 @@ local function normalizeSelectedIcons(icons)
         end
     end
     return normalized
-end
-
-local function arrayContains(array, value)
-    for _, item in ipairs(array or {}) do
-        if item == value then
-            return true
-        end
-    end
-    return false
-end
-
-local function removeFromArray(array, value)
-    for i = #array, 1, -1 do
-        if array[i] == value then
-            table.remove(array, i)
-        end
-    end
 end
 
 local function createText(parent, size, justify)
@@ -782,6 +794,18 @@ local function hasInterfaceBindings(key)
     return false
 end
 
+local function hasBonusBarBindings(key)
+    if not key or not ADDON.GetBonusBarBindings then
+        return false
+    end
+    for _, slot in pairs(ADDON.GetBonusBarBindings(key) or {}) do
+        if slot then
+            return true
+        end
+    end
+    return false
+end
+
 local function hasMacroBinding(binding)
     return binding and (((binding.macrotext or "") ~= "") or #(binding.icons or {}) > 0)
 end
@@ -805,6 +829,267 @@ local function setModeButtonActive(button, active)
             button.activeBar:Hide()
         end
     end
+end
+
+local function setControlEnabled(control, enabled)
+    if not control then
+        return
+    end
+    if enabled then
+        control:Enable()
+        control:SetAlpha(1)
+        if control.text then
+            control.text:SetAlpha(1)
+        end
+        if control.valueText then
+            control.valueText:SetAlpha(1)
+        end
+        if control.clickArea then
+            control.clickArea:Enable()
+        end
+    else
+        control:Disable()
+        control:SetAlpha(0.45)
+        if control.text then
+            control.text:SetAlpha(0.45)
+        end
+        if control.valueText then
+            control.valueText:SetAlpha(0.45)
+        end
+        if control.clickArea then
+            control.clickArea:Disable()
+        end
+    end
+end
+
+local function createEditorCheckbox(parent, label, getter, setter)
+    local checkbox = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+    checkbox:SetWidth(20)
+    checkbox:SetHeight(20)
+    styleButton(checkbox)
+    checkbox.text = createText(parent, 11, "LEFT")
+    checkbox.text:SetPoint("LEFT", checkbox, "RIGHT", 6, 0)
+    checkbox.text:SetText(label)
+    checkbox.text:SetTextColor(0.86, 0.9, 0.95)
+    checkbox.clickArea = CreateFrame("Button", nil, parent)
+    checkbox.clickArea:SetPoint("LEFT", checkbox.text, "LEFT", 0, 0)
+    checkbox.clickArea:SetPoint("RIGHT", checkbox.text, "RIGHT", 0, 0)
+    checkbox.clickArea:SetHeight(20)
+    checkbox.clickArea:SetScript("OnClick", function()
+        if checkbox:IsEnabled() then
+            checkbox:Click()
+        end
+    end)
+    checkbox:SetScript("OnClick", function(self)
+        setter(self:GetChecked() and true or false)
+        if refreshBonusBarEditorSettingsControls then
+            refreshBonusBarEditorSettingsControls()
+        end
+        if ADDON.RefreshSettings then
+            ADDON.RefreshSettings()
+        end
+        if ADDON.RefreshBonusBar then
+            ADDON.RefreshBonusBar()
+        end
+    end)
+    checkbox.refresh = function()
+        checkbox:SetChecked(getter() and true or false)
+    end
+    return checkbox
+end
+
+local function getBonusAnchorText(value)
+    for _, option in ipairs(BONUS_ANCHOR_OPTIONS) do
+        if option.value == value then
+            return option.text
+        end
+    end
+    return BONUS_ANCHOR_OPTIONS[1].text
+end
+
+local function getBonusGrowthText(value)
+    for _, option in ipairs(BONUS_GROWTH_OPTIONS) do
+        if option.value == value then
+            return option.text
+        end
+    end
+    return BONUS_GROWTH_OPTIONS[1].text
+end
+
+local function showBonusAnchorSelector(selector)
+    if not selector or not selector:IsEnabled() then
+        return
+    end
+    if bonusGrowthSelectorPopup then
+        bonusGrowthSelectorPopup:Hide()
+    end
+    if not bonusAnchorSelectorPopup then
+        bonusAnchorSelectorPopup = CreateFrame("Frame", "DudesFlexBindingsEditorBonusAnchorSelectorPopup", UIParent)
+        bonusAnchorSelectorPopup:SetWidth(134)
+        bonusAnchorSelectorPopup:SetHeight(#BONUS_ANCHOR_OPTIONS * 24 + 10)
+        bonusAnchorSelectorPopup:SetFrameStrata("TOOLTIP")
+        bonusAnchorSelectorPopup:SetFrameLevel(PICKER_FRAME_LEVEL + 10)
+        bonusAnchorSelectorPopup:EnableMouse(true)
+        setBackdrop(bonusAnchorSelectorPopup, 0.045, 0.052, 0.065, 1)
+        bonusAnchorSelectorPopup.buttons = {}
+        for i, option in ipairs(BONUS_ANCHOR_OPTIONS) do
+            local button = CreateFrame("Button", nil, bonusAnchorSelectorPopup)
+            button:SetWidth(118)
+            button:SetHeight(22)
+            button:SetPoint("TOPLEFT", bonusAnchorSelectorPopup, "TOPLEFT", 8, -6 - (i - 1) * 24)
+            button.value = option.value
+            styleButton(button)
+            button.text = createText(button, 11, "CENTER")
+            button.text:SetAllPoints(button)
+            button.text:SetText(option.text)
+            button:SetScript("OnClick", function(self)
+                local owner = bonusAnchorSelectorPopup.owner
+                ADDON.GetSettings().bonusBarAnchor = self.value
+                if owner and owner.refresh then
+                    owner.refresh()
+                end
+                if refreshBonusBarEditorSettingsControls then
+                    refreshBonusBarEditorSettingsControls()
+                end
+                if ADDON.RefreshSettings then
+                    ADDON.RefreshSettings()
+                end
+                if ADDON.RefreshBonusBar then
+                    ADDON.RefreshBonusBar()
+                end
+                bonusAnchorSelectorPopup:Hide()
+            end)
+            bonusAnchorSelectorPopup.buttons[i] = button
+        end
+        bonusAnchorSelectorPopup:Hide()
+    end
+
+    if bonusAnchorSelectorPopup:IsShown() and bonusAnchorSelectorPopup.owner == selector then
+        bonusAnchorSelectorPopup:Hide()
+        return
+    end
+
+    local value = ADDON.GetSettings().bonusBarAnchor or "topLeft"
+    for _, button in ipairs(bonusAnchorSelectorPopup.buttons or {}) do
+        if button.value == value then
+            button:SetBackdropBorderColor(1, 0.82, 0.1, 1)
+        else
+            button:SetBackdropBorderColor(BORDER_R, BORDER_G, BORDER_B, 1)
+        end
+    end
+    bonusAnchorSelectorPopup.owner = selector
+    bonusAnchorSelectorPopup:ClearAllPoints()
+    bonusAnchorSelectorPopup:SetPoint("TOPLEFT", selector, "BOTTOMLEFT", 0, -4)
+    bonusAnchorSelectorPopup:Show()
+end
+
+local function showBonusGrowthSelector(selector)
+    if not selector or not selector:IsEnabled() then
+        return
+    end
+    if bonusAnchorSelectorPopup then
+        bonusAnchorSelectorPopup:Hide()
+    end
+    if not bonusGrowthSelectorPopup then
+        bonusGrowthSelectorPopup = CreateFrame("Frame", "DudesFlexBindingsEditorBonusGrowthSelectorPopup", UIParent)
+        bonusGrowthSelectorPopup:SetWidth(118)
+        bonusGrowthSelectorPopup:SetHeight(#BONUS_GROWTH_OPTIONS * 24 + 10)
+        bonusGrowthSelectorPopup:SetFrameStrata("TOOLTIP")
+        bonusGrowthSelectorPopup:SetFrameLevel(PICKER_FRAME_LEVEL + 10)
+        bonusGrowthSelectorPopup:EnableMouse(true)
+        setBackdrop(bonusGrowthSelectorPopup, 0.045, 0.052, 0.065, 1)
+        bonusGrowthSelectorPopup.buttons = {}
+        for i, option in ipairs(BONUS_GROWTH_OPTIONS) do
+            local button = CreateFrame("Button", nil, bonusGrowthSelectorPopup)
+            button:SetWidth(102)
+            button:SetHeight(22)
+            button:SetPoint("TOPLEFT", bonusGrowthSelectorPopup, "TOPLEFT", 8, -6 - (i - 1) * 24)
+            button.value = option.value
+            styleButton(button)
+            button.text = createText(button, 11, "CENTER")
+            button.text:SetAllPoints(button)
+            button.text:SetText(option.text)
+            button:SetScript("OnClick", function(self)
+                local owner = bonusGrowthSelectorPopup.owner
+                ADDON.GetSettings().bonusBarGrowthDirection = self.value
+                if owner and owner.refresh then
+                    owner.refresh()
+                end
+                if refreshBonusBarEditorSettingsControls then
+                    refreshBonusBarEditorSettingsControls()
+                end
+                if ADDON.RefreshSettings then
+                    ADDON.RefreshSettings()
+                end
+                if ADDON.RefreshBonusBar then
+                    ADDON.RefreshBonusBar()
+                end
+                bonusGrowthSelectorPopup:Hide()
+            end)
+            bonusGrowthSelectorPopup.buttons[i] = button
+        end
+        bonusGrowthSelectorPopup:Hide()
+    end
+
+    if bonusGrowthSelectorPopup:IsShown() and bonusGrowthSelectorPopup.owner == selector then
+        bonusGrowthSelectorPopup:Hide()
+        return
+    end
+
+    local value = ADDON.GetSettings().bonusBarGrowthDirection or "right"
+    for _, button in ipairs(bonusGrowthSelectorPopup.buttons or {}) do
+        if button.value == value then
+            button:SetBackdropBorderColor(1, 0.82, 0.1, 1)
+        else
+            button:SetBackdropBorderColor(BORDER_R, BORDER_G, BORDER_B, 1)
+        end
+    end
+    bonusGrowthSelectorPopup.owner = selector
+    bonusGrowthSelectorPopup:ClearAllPoints()
+    bonusGrowthSelectorPopup:SetPoint("TOPLEFT", selector, "BOTTOMLEFT", 0, -4)
+    bonusGrowthSelectorPopup:Show()
+end
+
+local function createEditorBonusAnchorSelector(parent)
+    local selector = CreateFrame("Button", nil, parent)
+    selector:SetWidth(118)
+    selector:SetHeight(24)
+    styleButton(selector)
+    selector.valueText = createText(selector, 11, "CENTER")
+    selector.valueText:SetAllPoints(selector)
+    selector.text = createText(parent, 11, "LEFT")
+    selector.text:SetPoint("LEFT", selector, "RIGHT", 8, 0)
+    selector.text:SetText("Bonus-Bar Anker")
+    selector.text:SetTextColor(0.86, 0.9, 0.95)
+    selector:SetScript("OnClick", function(self)
+        showBonusAnchorSelector(self)
+    end)
+    selector.refresh = function()
+        selector.valueText:SetText(getBonusAnchorText(ADDON.GetSettings().bonusBarAnchor or "topLeft"))
+    end
+    selector.refresh()
+    return selector
+end
+
+local function createEditorBonusGrowthSelector(parent)
+    local selector = CreateFrame("Button", nil, parent)
+    selector:SetWidth(118)
+    selector:SetHeight(24)
+    styleButton(selector)
+    selector.valueText = createText(selector, 11, "CENTER")
+    selector.valueText:SetAllPoints(selector)
+    selector.text = createText(parent, 11, "LEFT")
+    selector.text:SetPoint("LEFT", selector, "RIGHT", 8, 0)
+    selector.text:SetText("Bonus-Bar Wachstum")
+    selector.text:SetTextColor(0.86, 0.9, 0.95)
+    selector:SetScript("OnClick", function(self)
+        showBonusGrowthSelector(self)
+    end)
+    selector.refresh = function()
+        selector.valueText:SetText(getBonusGrowthText(ADDON.GetSettings().bonusBarGrowthDirection or "right"))
+    end
+    selector.refresh()
+    return selector
 end
 
 showFrame = function(frame, visible)
@@ -833,7 +1118,9 @@ setEditorMode = function(mode)
     if not editor then
         return
     end
-    mode = mode == "macro" and "macro" or "interface"
+    if mode ~= "macro" and mode ~= "bonus" then
+        mode = "interface"
+    end
     if editorMode == "macro" and mode ~= "macro" and macroDirty then
         saveMacroDraft()
     end
@@ -841,11 +1128,13 @@ setEditorMode = function(mode)
 
     local showInterface = mode == "interface"
     local showMacro = mode == "macro"
+    local showBonus = mode == "bonus"
 
     editor:SetHeight(640)
 
     setModeButtonActive(editor.interfaceModeButton, showInterface)
     setModeButtonActive(editor.macroModeButton, showMacro)
+    setModeButtonActive(editor.bonusModeButton, showBonus)
 
     showFrame(editor.interfaceTitle, showInterface)
     showFrame(editor.interfaceLockWarning, showInterface and editor.macroLocked)
@@ -865,6 +1154,30 @@ setEditorMode = function(mode)
         else
             button:Hide()
         end
+    end
+
+    showFrame(editor.bonusTitle, showBonus)
+    showFrame(editor.bonusHint, showBonus)
+    for _, row in ipairs(bonusBarRows) do
+        showFrame(row, showBonus)
+    end
+    showFrame(editor.bonusSettingsTitle, showBonus)
+    for _, checkbox in ipairs(editor.bonusSettingsCheckboxes or {}) do
+        showFrame(checkbox, showBonus)
+        showFrame(checkbox.text, showBonus)
+        showFrame(checkbox.clickArea, showBonus)
+    end
+    if showBonus and refreshBonusBarEditorSettingsControls then
+        refreshBonusBarEditorSettingsControls()
+    end
+    if not showBonus and bonusBarSelectorPopup then
+        bonusBarSelectorPopup:Hide()
+    end
+    if not showBonus and bonusAnchorSelectorPopup then
+        bonusAnchorSelectorPopup:Hide()
+    end
+    if not showBonus and bonusGrowthSelectorPopup then
+        bonusGrowthSelectorPopup:Hide()
     end
 
     showFrame(editor.macroTitle, showMacro)
@@ -916,21 +1229,24 @@ setEditorMode = function(mode)
         end
         refreshMacroLockState()
         refreshMacroScrollBar()
-    else
+    elseif showInterface then
         if actionPicker then
             actionPicker:Hide()
         end
         refreshActionPicker()
+    else
+        if actionPicker then
+            actionPicker:Hide()
+        end
+        if refreshBonusBarRows then
+            refreshBonusBarRows()
+        end
     end
 end
 
 local function refreshInterfaceRows()
     if editor and editor.characterBindingCheckbox and ADDON.IsCharacterBindingSetEnabled then
-        if characterBindingSetEnabledOverride ~= nil then
-            editor.characterBindingCheckbox:SetChecked(characterBindingSetEnabledOverride)
-        else
-            editor.characterBindingCheckbox:SetChecked(ADDON.IsCharacterBindingSetEnabled())
-        end
+        editor.characterBindingCheckbox:SetChecked(ADDON.IsCharacterBindingSetEnabled())
     end
 
     local variants = ADDON.GetDefaultBindingKeysForKey(currentKey)
@@ -947,7 +1263,7 @@ local function refreshInterfaceRows()
             setModifierTextColor(row.actionText, row.modifier)
             row.clear:Show()
         else
-            row.actionText:SetText("<not bound>")
+            row.actionText:SetText("<nicht belegt>")
             row.actionText:SetTextColor(0.45, 0.48, 0.52)
             row.clear:Hide()
         end
@@ -960,6 +1276,9 @@ local function refreshInterfaceRows()
     if refreshMacroLockState then
         refreshMacroLockState()
     end
+    if refreshBonusBarRows then
+        refreshBonusBarRows()
+    end
     if editorMode == "interface" and refreshActionPicker then
         refreshActionPicker()
     end
@@ -968,6 +1287,12 @@ end
 function ADDON.RefreshEditorBindings()
     if editor and editor:IsShown() then
         refreshInterfaceRows()
+        if refreshBonusBarRows then
+            refreshBonusBarRows()
+        end
+        if refreshBonusBarEditorSettingsControls then
+            refreshBonusBarEditorSettingsControls()
+        end
     end
 end
 
@@ -1020,6 +1345,251 @@ local function confirmAndApplyAction(bindingKey, action, conflict)
         popup:SetFrameStrata("TOOLTIP")
         popup:SetFrameLevel(PICKER_FRAME_LEVEL + 20)
         stylePopupButtons(popup)
+    end
+end
+
+local function setBonusBarRowLocked(row, locked)
+    if locked then
+        row.warningText:Hide()
+        if row.selector then
+            row.selector:Disable()
+            row.selector:SetAlpha(0.45)
+        end
+        if bonusBarSelectorPopup and bonusBarSelectorPopup.currentRow == row then
+            bonusBarSelectorPopup:Hide()
+        end
+    else
+        row.warningText:Hide()
+        if row.selector then
+            row.selector:Enable()
+            row.selector:SetAlpha(1)
+        end
+    end
+end
+
+local function applyBonusBarSlotToRow(bindingKey, slot)
+    if ADDON.SetBonusBarBindingAction then
+        ADDON.SetBonusBarBindingAction(bindingKey, slot)
+    end
+    if refreshBonusBarRows then
+        refreshBonusBarRows()
+    end
+end
+
+local function confirmAndApplyBonusBarSlot(bindingKey, slot, conflict)
+    if not conflict then
+        applyBonusBarSlotToRow(bindingKey, slot)
+        return
+    end
+
+    StaticPopupDialogs["DUDES_FLEX_BINDINGS_MOVE_BONUS_BAR_BINDING"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_MOVE_BONUS_BAR_BINDING"] or {
+        text = "Bonus-Bar Aktion %s ist bereits gebunden an:\n%s\n\nVon dort lösen und hier binden?",
+        button1 = "Lösen",
+        button2 = "Abbrechen",
+        OnAccept = function()
+            if not pendingBonusBarMove then
+                return
+            end
+            if pendingBonusBarMove.conflict and pendingBonusBarMove.conflict.bindingKey and ADDON.ClearBonusBarBindingAction then
+                ADDON.ClearBonusBarBindingAction(pendingBonusBarMove.conflict.bindingKey)
+            end
+            applyBonusBarSlotToRow(pendingBonusBarMove.bindingKey, pendingBonusBarMove.slot)
+            pendingBonusBarMove = nil
+        end,
+        OnCancel = function()
+            pendingBonusBarMove = nil
+        end,
+        timeout = 0,
+        whileDead = 1,
+        hideOnEscape = 1,
+    }
+
+    pendingBonusBarMove = {
+        bindingKey = bindingKey,
+        slot = slot,
+        conflict = conflict,
+    }
+    local popup = StaticPopup_Show("DUDES_FLEX_BINDINGS_MOVE_BONUS_BAR_BINDING", tostring(slot or ""), conflict.bindingKey or "")
+    if popup then
+        popup:SetFrameStrata("TOOLTIP")
+        popup:SetFrameLevel(PICKER_FRAME_LEVEL + 20)
+        stylePopupButtons(popup)
+    end
+end
+
+local function selectBonusBarSlot(row, slot)
+    if not row or not row.bindingKey then
+        return
+    end
+    if bonusBarSelectorPopup then
+        bonusBarSelectorPopup:Hide()
+    end
+    if slot then
+        local conflict = ADDON.FindDraftBindingForBonusBarAction and ADDON.FindDraftBindingForBonusBarAction(slot, row.bindingKey)
+        confirmAndApplyBonusBarSlot(row.bindingKey, slot, conflict)
+    else
+        applyBonusBarSlotToRow(row.bindingKey, nil)
+    end
+end
+
+local function refreshBonusBarSelectorPopup()
+    if not bonusBarSelectorPopup then
+        return
+    end
+
+    local selectedSlot = bonusBarSelectorPopup.currentRow and bonusBarSelectorPopup.currentRow.slot or nil
+    for _, button in ipairs(bonusBarSelectorPopup.buttons or {}) do
+        local selected = button.slot == selectedSlot
+        if button.slot == nil and selectedSlot == nil then
+            selected = true
+        end
+        if selected then
+            button:SetBackdropBorderColor(1, 0.82, 0.1, 1)
+        else
+            button:SetBackdropBorderColor(BORDER_R, BORDER_G, BORDER_B, 1)
+        end
+    end
+end
+
+local function createBonusBarSelectorPopup()
+    if bonusBarSelectorPopup then
+        return bonusBarSelectorPopup
+    end
+
+    local popup = CreateFrame("Frame", "DudesFlexBindingsBonusBarSelectorPopup", UIParent)
+    popup:SetWidth(132)
+    popup:SetHeight(104)
+    popup:SetFrameStrata("TOOLTIP")
+    popup:SetFrameLevel(PICKER_FRAME_LEVEL + 10)
+    popup:EnableMouse(true)
+    setBackdrop(popup, 0.045, 0.052, 0.065, 1)
+    popup.buttons = {}
+
+    local values = {
+        { text = "", slot = nil },
+        { text = "1", slot = 1 },
+        { text = "2", slot = 2 },
+        { text = "3", slot = 3 },
+        { text = "4", slot = 4 },
+        { text = "5", slot = 5 },
+        { text = "6", slot = 6 },
+        { text = "7", slot = 7 },
+        { text = "8", slot = 8 },
+        { text = "9", slot = 9 },
+        { text = "10", slot = 10 },
+        { text = "11", slot = 11 },
+        { text = "12", slot = 12 },
+    }
+    for i, option in ipairs(values) do
+        local button = CreateFrame("Button", nil, popup)
+        button:SetWidth(28)
+        button:SetHeight(22)
+        button:SetPoint("TOPLEFT", popup, "TOPLEFT", 8 + ((i - 1) % 4) * 30, -8 - math.floor((i - 1) / 4) * 24)
+        button.slot = option.slot
+        styleButton(button)
+        button.text = createText(button, 11, "CENTER")
+        button.text:SetAllPoints(button)
+        button.text:SetText(option.text)
+        button.text:SetTextColor(1, 1, 1)
+        button:SetScript("OnClick", function(self)
+            selectBonusBarSlot(popup.currentRow, self.slot)
+        end)
+        popup.buttons[i] = button
+    end
+
+    popup:SetScript("OnHide", function(self)
+        self.currentRow = nil
+    end)
+    popup:Hide()
+    bonusBarSelectorPopup = popup
+    return popup
+end
+
+local function toggleBonusBarSelector(row)
+    if not row or not row.selector or not row.selector:IsEnabled() then
+        return
+    end
+
+    local popup = createBonusBarSelectorPopup()
+    if popup:IsShown() and popup.currentRow == row then
+        popup:Hide()
+        return
+    end
+
+    popup.currentRow = row
+    popup:ClearAllPoints()
+    popup:SetPoint("TOPRIGHT", row.selector, "BOTTOMRIGHT", 0, -4)
+    refreshBonusBarSelectorPopup()
+    popup:Show()
+end
+
+refreshBonusBarRows = function()
+    if not editor or not currentKey then
+        return
+    end
+
+    local variants = ADDON.GetDefaultBindingKeysForKey(currentKey)
+    for i, row in ipairs(bonusBarRows) do
+        local variant = variants[i]
+        local action = variant and ADDON.GetDefaultBindingAction(variant.key) or ""
+        local slot = variant and ADDON.GetBonusBarBindingAction and ADDON.GetBonusBarBindingAction(variant.key) or nil
+        local locked = action and action ~= ""
+        row.slot = slot
+        row.bindingKey = variant and variant.key or nil
+        row.modifier = variant and variant.modifier or nil
+        row.keyText:SetText(variant and variant.key or "")
+        setModifierTextColor(row.keyText, row.modifier)
+        if row.selectorText then
+            row.selectorText:SetText(slot and tostring(slot) or "")
+            row.selectorText:SetTextColor(locked and 0.55 or 1, locked and 0.55 or 1, locked and 0.55 or 1)
+        end
+        if locked then
+            row.slotText:SetText(BONUS_BAR_LOCK_WARNING_TEXT)
+            row.slotText:SetTextColor(1, 0.35, 0.25)
+        elseif slot then
+            row.slotText:SetText("Bei aktiver Bonus-Bar")
+            setModifierTextColor(row.slotText, row.modifier)
+        else
+            row.slotText:SetText("<nicht belegt>")
+            row.slotText:SetTextColor(0.54, 0.58, 0.66)
+        end
+        setBonusBarRowLocked(row, locked)
+        if bonusBarSelectorPopup and bonusBarSelectorPopup:IsShown() and bonusBarSelectorPopup.currentRow == row then
+            refreshBonusBarSelectorPopup()
+        end
+        if editorMode == "bonus" then
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+end
+
+refreshBonusBarEditorSettingsControls = function()
+    if not editor then
+        return
+    end
+    local settings = ADDON.GetSettings()
+    local enabled = settings.showBonusBar and true or false
+
+    if editor.bonusBarShowCheckbox then
+        editor.bonusBarShowCheckbox:SetChecked(enabled)
+    end
+    if editor.bonusBarAlignCheckbox then
+        editor.bonusBarAlignCheckbox:SetChecked(settings.alignBonusBar and true or false)
+        setControlEnabled(editor.bonusBarAlignCheckbox, enabled)
+    end
+    if editor.bonusBarAnchorSelector then
+        editor.bonusBarAnchorSelector.refresh()
+        setControlEnabled(editor.bonusBarAnchorSelector, enabled)
+    end
+    if editor.bonusBarGrowthSelector then
+        editor.bonusBarGrowthSelector.refresh()
+        setControlEnabled(editor.bonusBarGrowthSelector, enabled)
+    end
+    if editor.bonusBarShowBindingsCheckbox then
+        editor.bonusBarShowBindingsCheckbox:SetChecked(settings.showBonusBarBindings and true or false)
+        setControlEnabled(editor.bonusBarShowBindingsCheckbox, enabled)
     end
 end
 
@@ -1416,8 +1986,8 @@ end
 local function createInterfaceRow(parent, index)
     local row = CreateFrame("Button", nil, parent)
     row:SetWidth(594)
-    row:SetHeight(34)
-    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 22, -156 - (index - 1) * 35)
+    row:SetHeight(BINDING_ROW_HEIGHT)
+    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 22, -166 - (index - 1) * BINDING_ROW_STEP)
     addShadow(row)
     setBackdrop(row, 0.085, 0.098, 0.12, 1)
 
@@ -1426,8 +1996,9 @@ local function createInterfaceRow(parent, index)
     row.keyText:SetWidth(105)
 
     row.actionText = createText(row, 12)
-    row.actionText:SetPoint("LEFT", row, "LEFT", 132, 0)
-    row.actionText:SetPoint("RIGHT", row, "RIGHT", -76, 0)
+    row.actionText:SetPoint("LEFT", row, "LEFT", 0, 0)
+    row.actionText:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+    row.actionText:SetJustifyH("CENTER")
     row.actionText:SetTextColor(1, 0.82, 0.1)
 
     row.clear = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
@@ -1445,6 +2016,48 @@ local function createInterfaceRow(parent, index)
 
     styleButton(row.clear)
     interfaceRows[index] = row
+    return row
+end
+
+local function createBonusBarRow(parent, index)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetWidth(594)
+    row:SetHeight(BINDING_ROW_HEIGHT)
+    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 22, SECTION_CONTENT_Y - (index - 1) * BINDING_ROW_STEP)
+    addShadow(row)
+    setBackdrop(row, 0.085, 0.098, 0.12, 1)
+
+    row.keyText = createText(row, 13)
+    row.keyText:SetPoint("LEFT", row, "LEFT", 12, 0)
+    row.keyText:SetWidth(118)
+
+    row.slotText = createText(row, 11)
+    row.slotText:SetPoint("LEFT", row, "LEFT", 0, 0)
+    row.slotText:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+    row.slotText:SetJustifyH("CENTER")
+    row.slotText:SetTextColor(0.7, 0.75, 0.82)
+
+    row.warningText = createText(row, 10)
+    row.warningText:SetPoint("TOPLEFT", row.slotText, "BOTTOMLEFT", 0, 0)
+    row.warningText:SetWidth(300)
+    row.warningText:SetTextColor(1, 0.35, 0.25)
+    row.warningText:Hide()
+
+    row.selector = CreateFrame("Button", nil, row)
+    row.selector:SetWidth(58)
+    row.selector:SetHeight(24)
+    row.selector:SetPoint("RIGHT", row, "RIGHT", -12, 0)
+    styleButton(row.selector)
+    row.selector:SetScript("OnClick", function()
+        toggleBonusBarSelector(row)
+    end)
+
+    row.selectorText = createText(row.selector, 12, "CENTER")
+    row.selectorText:SetAllPoints(row.selector)
+    row.selectorText:SetText("")
+    row.selectorText:SetTextColor(1, 1, 1)
+
+    bonusBarRows[index] = row
     return row
 end
 
@@ -1947,34 +2560,33 @@ local function createEditor()
 
     editor.interfaceModeButton = createModeButton(editor, "Interface", "interface", 22)
     editor.macroModeButton = createModeButton(editor, "Makro", "macro", 144)
+    editor.bonusModeButton = createModeButton(editor, "Bonus-Bar", "bonus", 266)
 
-    local interfaceTitle = createText(editor, 17)
-    interfaceTitle:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -108)
-    interfaceTitle:SetText("Belegungen")
+    local interfaceTitle = createText(editor, SECTION_TITLE_SIZE)
+    interfaceTitle:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, SECTION_TITLE_Y)
+    interfaceTitle:SetText("Interface Belegungen")
     setHeadingText(interfaceTitle)
     editor.interfaceTitle = interfaceTitle
 
     editor.characterBindingCheckbox = CreateFrame("CheckButton", nil, editor, "UICheckButtonTemplate")
     editor.characterBindingCheckbox:SetWidth(20)
     editor.characterBindingCheckbox:SetHeight(20)
-    editor.characterBindingCheckbox:SetPoint("TOPLEFT", interfaceTitle, "BOTTOMLEFT", 0, -8)
+    editor.characterBindingCheckbox:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, SECTION_CONTENT_Y + 2)
     styleButton(editor.characterBindingCheckbox)
     editor.characterBindingCheckbox:SetScript("OnClick", function(self)
         local enabled = self:GetChecked() and true or false
         if not ADDON.SetCharacterBindingSetEnabled(enabled) then
             self:SetChecked(ADDON.IsCharacterBindingSetEnabled and ADDON.IsCharacterBindingSetEnabled() or false)
             return
-        else
-            characterBindingSetEnabledOverride = enabled
-            self:SetChecked(enabled)
         end
+        self:SetChecked(ADDON.IsCharacterBindingSetEnabled and ADDON.IsCharacterBindingSetEnabled() or false)
         refreshInterfaceRows()
     end)
     editor.characterBindingCheckboxText = createText(editor, 11, "LEFT")
     editor.characterBindingCheckboxText:SetPoint("LEFT", editor.characterBindingCheckbox, "RIGHT", 6, 0)
     editor.characterBindingCheckboxText:SetPoint("RIGHT", editor, "RIGHT", -24, 0)
     editor.characterBindingCheckboxText:SetHeight(18)
-    editor.characterBindingCheckboxText:SetText("Charakterspezifische Belegung (gilt für alle Interface-Belegungen)")
+    editor.characterBindingCheckboxText:SetText("Charakterspezifische Interface Belegungen")
     editor.characterBindingCheckboxText:SetTextColor(0.86, 0.9, 0.95)
     if editor.characterBindingCheckboxText.SetNonSpaceWrap then
         editor.characterBindingCheckboxText:SetNonSpaceWrap(false)
@@ -2001,15 +2613,69 @@ local function createEditor()
         createInterfaceRow(editor, i)
     end
 
-    editor.actionListTitle = createText(editor, 17)
-    editor.actionListTitle:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -320)
-    editor.actionListTitle:SetText("Suche")
+    editor.bonusTitle = createText(editor, SECTION_TITLE_SIZE)
+    editor.bonusTitle:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, SECTION_TITLE_Y)
+    editor.bonusTitle:SetText("Bonus-Bar Belegung")
+    setHeadingText(editor.bonusTitle)
+
+    editor.bonusHint = createText(editor, 11)
+    editor.bonusHint:SetPoint("LEFT", editor.bonusTitle, "RIGHT", 14, 0)
+    editor.bonusHint:SetPoint("RIGHT", editor, "RIGHT", -24, 0)
+    editor.bonusHint:SetTextColor(0.72, 0.76, 0.84)
+    editor.bonusHint:SetText("Gilt nur bei aktiver Bonus-, Possess- oder Fahrzeugleiste")
+
+    for i = 1, 4 do
+        createBonusBarRow(editor, i)
+    end
+
+    editor.bonusSettingsTitle = createText(editor, SECTION_TITLE_SIZE)
+    editor.bonusSettingsTitle:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -307)
+    editor.bonusSettingsTitle:SetText("Bonus-Bar Anzeige")
+    setHeadingText(editor.bonusSettingsTitle)
+
+    editor.bonusBarShowCheckbox = createEditorCheckbox(editor, "Bonus-Bar anzeigen", function()
+        return ADDON.GetSettings().showBonusBar
+    end, function(value)
+        ADDON.GetSettings().showBonusBar = value
+    end)
+    editor.bonusBarShowCheckbox:SetPoint("TOPLEFT", editor.bonusSettingsTitle, "BOTTOMLEFT", 0, -10)
+
+    editor.bonusBarAlignCheckbox = createEditorCheckbox(editor, "Bonus-Bar ausrichten", function()
+        return ADDON.GetSettings().alignBonusBar
+    end, function(value)
+        ADDON.GetSettings().alignBonusBar = value
+    end)
+    editor.bonusBarAlignCheckbox:SetPoint("TOPLEFT", editor.bonusBarShowCheckbox, "BOTTOMLEFT", 0, -4)
+
+    editor.bonusBarAnchorSelector = createEditorBonusAnchorSelector(editor)
+    editor.bonusBarAnchorSelector:SetPoint("TOPLEFT", editor.bonusBarAlignCheckbox, "BOTTOMLEFT", 0, -4)
+
+    editor.bonusBarGrowthSelector = createEditorBonusGrowthSelector(editor)
+    editor.bonusBarGrowthSelector:SetPoint("TOPLEFT", editor.bonusBarAnchorSelector, "BOTTOMLEFT", 0, -4)
+
+    editor.bonusBarShowBindingsCheckbox = createEditorCheckbox(editor, "Bonus-Bar Bindings anzeigen", function()
+        return ADDON.GetSettings().showBonusBarBindings
+    end, function(value)
+        ADDON.GetSettings().showBonusBarBindings = value
+    end)
+    editor.bonusBarShowBindingsCheckbox:SetPoint("TOPLEFT", editor.bonusBarGrowthSelector, "BOTTOMLEFT", 0, -4)
+    editor.bonusSettingsCheckboxes = {
+        editor.bonusBarShowCheckbox,
+        editor.bonusBarAlignCheckbox,
+        editor.bonusBarAnchorSelector,
+        editor.bonusBarGrowthSelector,
+        editor.bonusBarShowBindingsCheckbox,
+    }
+
+    editor.actionListTitle = createText(editor, SECTION_TITLE_SIZE)
+    editor.actionListTitle:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -326)
+    editor.actionListTitle:SetText("Interface Suche")
     setHeadingText(editor.actionListTitle)
 
     editor.actionFilter = CreateFrame("EditBox", nil, editor)
     editor.actionFilter:SetWidth(380)
     editor.actionFilter:SetHeight(20)
-    editor.actionFilter:SetPoint("TOPLEFT", editor, "TOPLEFT", 32, -350)
+    editor.actionFilter:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -350)
     editor.actionFilter:SetAutoFocus(false)
     editor.actionFilter:SetFontObject(ChatFontNormal)
     editor.actionFilter:SetTextInsets(6, 6, 0, 0)
@@ -2042,8 +2708,8 @@ local function createEditor()
         createInlineActionButton(editor, i)
     end
 
-    local macroTitle = createText(editor, 17)
-    macroTitle:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -108)
+    local macroTitle = createText(editor, SECTION_TITLE_SIZE)
+    macroTitle:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, SECTION_TITLE_Y)
     macroTitle:SetText("Makro")
     setHeadingText(macroTitle)
     editor.macroTitle = macroTitle
@@ -2055,7 +2721,7 @@ local function createEditor()
     editor.macroLockWarning:Hide()
 
     local macroBox = CreateFrame("Frame", nil, editor)
-    macroBox:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -138)
+    macroBox:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, SECTION_CONTENT_Y)
     macroBox:SetWidth(580)
     macroBox:SetHeight(112)
     addShadow(macroBox)
@@ -2106,7 +2772,7 @@ local function createEditor()
     end)
     scroll:SetScrollChild(editor.macroEditBox)
 
-    local selectedLabel = createText(editor, 17)
+    local selectedLabel = createText(editor, SECTION_TITLE_SIZE)
     selectedLabel:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -264)
     selectedLabel:SetText("Icons")
     setHeadingText(selectedLabel)
@@ -2203,10 +2869,10 @@ local function createEditor()
     addBorderHover(editor.iconSearch)
     editor.iconSearch:SetScript("OnTextChanged", refreshSuggestions)
 
-    editor.iconSearchTitle = createText(editor, 14)
+    editor.iconSearchTitle = createText(editor, SECTION_TITLE_SIZE)
     editor.iconSearchTitle:SetWidth(160)
-    editor.iconSearchTitle:SetHeight(18)
-    editor.iconSearchTitle:SetText("Suche")
+    editor.iconSearchTitle:SetHeight(22)
+    editor.iconSearchTitle:SetText("Icon Suche")
     setHeadingText(editor.iconSearchTitle)
     editor.iconSearchTitle:Hide()
 
@@ -2249,7 +2915,7 @@ function ADDON.OpenEditor(key)
     currentKey = key
 
     local binding = ADDON.GetBinding(key)
-    editor.title:SetText("Binding Key \"" .. key .. "\"")
+    editor.title:SetText("Belegung für Taste \"" .. key .. "\"")
     suppressMacroSave = true
     editor.macroEditBox:SetText(binding and binding.macrotext or "")
     suppressMacroSave = nil
@@ -2280,9 +2946,13 @@ function ADDON.OpenEditor(key)
     refreshSuggestions()
     refreshMacroScrollBar()
     refreshInterfaceRows()
+    refreshBonusBarRows()
+    refreshBonusBarEditorSettingsControls()
 
     if hasMacroBinding(binding) then
         setEditorMode("macro")
+    elseif hasBonusBarBindings(key) then
+        setEditorMode("bonus")
     elseif hasInterfaceBindings(key) then
         setEditorMode("interface")
     else

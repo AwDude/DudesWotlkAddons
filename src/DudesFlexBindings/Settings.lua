@@ -4,8 +4,27 @@ local optionsPanel
 local minimapButton
 local layoutRows = {}
 local positionMinimapButton
+local bonusAnchorSelectorPopup
+local bonusGrowthSelectorPopup
 local BORDER_R, BORDER_G, BORDER_B = 0.32, 0.38, 0.46
 local HOVER_BORDER_R, HOVER_BORDER_G, HOVER_BORDER_B = 0.72, 0.86, 1
+local BONUS_ANCHOR_OPTIONS = {
+    { value = "topLeft", text = "Oben links" },
+    { value = "top", text = "Oben" },
+    { value = "topRight", text = "Oben rechts" },
+    { value = "left", text = "Links" },
+    { value = "center", text = "Zentriert" },
+    { value = "right", text = "Rechts" },
+    { value = "bottomLeft", text = "Unten links" },
+    { value = "bottom", text = "Unten" },
+    { value = "bottomRight", text = "Unten rechts" },
+}
+local BONUS_GROWTH_OPTIONS = {
+    { value = "right", text = "Nach rechts" },
+    { value = "down", text = "Nach unten" },
+    { value = "left", text = "Nach links" },
+    { value = "up", text = "Nach oben" },
+}
 
 local function clamp(value, minValue, maxValue)
     if value < minValue then
@@ -180,6 +199,22 @@ local function layoutSettingsRows()
     end
 end
 
+local function layoutOptionsPanel()
+    if not optionsPanel or not optionsPanel.scrollFrame or not optionsPanel.content then
+        return
+    end
+
+    local width = optionsPanel:GetWidth() or 620
+    local height = optionsPanel:GetHeight() or 560
+    local contentHeight = math.max(980, height + 420)
+    optionsPanel.scrollFrame:ClearAllPoints()
+    optionsPanel.scrollFrame:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 0, -4)
+    optionsPanel.scrollFrame:SetPoint("BOTTOMRIGHT", optionsPanel, "BOTTOMRIGHT", -28, 4)
+    optionsPanel.content:SetWidth(math.max(520, width - 34))
+    optionsPanel.content:SetHeight(contentHeight)
+    layoutSettingsRows()
+end
+
 local function refreshLayoutRows()
     if not optionsPanel or not optionsPanel.layoutRows then
         return
@@ -188,6 +223,7 @@ local function refreshLayoutRows()
     layoutSettingsRows()
 
     local profiles = ADDON.GetLayoutProfiles and ADDON.GetLayoutProfiles() or {}
+    local lastVisibleRow
     for i, row in ipairs(optionsPanel.layoutRows) do
         local profile = profiles[i]
         row.profileId = profile and profile.id or nil
@@ -200,10 +236,299 @@ local function refreshLayoutRows()
                 row.delete:Show()
             end
             row:Show()
+            lastVisibleRow = row
         else
             row:Hide()
         end
     end
+    if optionsPanel.bonusTitle then
+        optionsPanel.bonusTitle:ClearAllPoints()
+        if lastVisibleRow then
+            optionsPanel.bonusTitle:SetPoint("TOPLEFT", lastVisibleRow, "BOTTOMLEFT", 0, -18)
+        elseif optionsPanel.saveLayoutButton then
+            optionsPanel.bonusTitle:SetPoint("TOPLEFT", optionsPanel.saveLayoutButton, "BOTTOMLEFT", 0, -18)
+        end
+    end
+end
+
+local function setFrameEnabled(frame, enabled)
+    if not frame then
+        return
+    end
+    if enabled then
+        frame:Enable()
+        frame:SetAlpha(1)
+    else
+        frame:Disable()
+        frame:SetAlpha(0.45)
+    end
+end
+
+local function showFrame(frame, visible)
+    if not frame then
+        return
+    end
+    if visible then
+        frame:Show()
+    else
+        frame:Hide()
+    end
+end
+
+local function refreshBonusBarSettingsControls()
+    if not optionsPanel then
+        return
+    end
+    local settings = ADDON.GetSettings()
+    local enabled = settings.showBonusBar and true or false
+
+    if optionsPanel.bonusBarCheckbox then
+        optionsPanel.bonusBarCheckbox:SetChecked(enabled)
+    end
+    if optionsPanel.alignBonusBarCheckbox then
+        optionsPanel.alignBonusBarCheckbox:SetChecked(settings.alignBonusBar and true or false)
+        setFrameEnabled(optionsPanel.alignBonusBarCheckbox, enabled)
+        showFrame(optionsPanel.alignBonusBarCheckbox, enabled)
+    end
+    if optionsPanel.bonusBarAnchorSelector then
+        optionsPanel.bonusBarAnchorSelector.refresh()
+        setFrameEnabled(optionsPanel.bonusBarAnchorSelector, enabled)
+        optionsPanel.bonusBarAnchorSelector.text:SetAlpha(enabled and 1 or 0.45)
+        showFrame(optionsPanel.bonusBarAnchorSelector, enabled)
+        showFrame(optionsPanel.bonusBarAnchorSelector.text, enabled)
+    end
+    if optionsPanel.bonusBarGrowthSelector then
+        optionsPanel.bonusBarGrowthSelector.refresh()
+        setFrameEnabled(optionsPanel.bonusBarGrowthSelector, enabled)
+        optionsPanel.bonusBarGrowthSelector.text:SetAlpha(enabled and 1 or 0.45)
+        showFrame(optionsPanel.bonusBarGrowthSelector, enabled)
+        showFrame(optionsPanel.bonusBarGrowthSelector.text, enabled)
+    end
+    if optionsPanel.showBonusBarBindingsCheckbox then
+        optionsPanel.showBonusBarBindingsCheckbox:SetChecked(settings.showBonusBarBindings and true or false)
+        setFrameEnabled(optionsPanel.showBonusBarBindingsCheckbox, enabled)
+        showFrame(optionsPanel.showBonusBarBindingsCheckbox, enabled)
+    end
+    if optionsPanel.characterInterfaceBindingsCheckbox and ADDON.IsCharacterBindingSetEnabled then
+        optionsPanel.characterInterfaceBindingsCheckbox:SetChecked(ADDON.IsCharacterBindingSetEnabled())
+    end
+end
+
+local function createCheckbox(parent, anchor, yOffset, label, getter, setter, afterClick)
+    local checkbox = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+    checkbox:SetWidth(22)
+    checkbox:SetHeight(22)
+    checkbox:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, yOffset)
+    styleButton(checkbox)
+    checkbox.text = checkbox:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    checkbox.text:SetPoint("LEFT", checkbox, "RIGHT", 2, 1)
+    checkbox.text:SetText(label)
+    checkbox:SetScript("OnClick", function(self)
+        setter(self:GetChecked() and true or false)
+        refreshBonusBarSettingsControls()
+        if afterClick then
+            afterClick(self)
+        end
+        if ADDON.RefreshBonusBar then
+            ADDON.RefreshBonusBar()
+        end
+    end)
+    checkbox.refresh = function()
+        checkbox:SetChecked(getter() and true or false)
+    end
+    return checkbox
+end
+
+local function getBonusAnchorText(value)
+    for _, option in ipairs(BONUS_ANCHOR_OPTIONS) do
+        if option.value == value then
+            return option.text
+        end
+    end
+    return BONUS_ANCHOR_OPTIONS[1].text
+end
+
+local function getBonusGrowthText(value)
+    for _, option in ipairs(BONUS_GROWTH_OPTIONS) do
+        if option.value == value then
+            return option.text
+        end
+    end
+    return BONUS_GROWTH_OPTIONS[1].text
+end
+
+local function showBonusAnchorSelector(selector)
+    if not selector or not selector:IsEnabled() then
+        return
+    end
+    if bonusGrowthSelectorPopup then
+        bonusGrowthSelectorPopup:Hide()
+    end
+    if not bonusAnchorSelectorPopup then
+        bonusAnchorSelectorPopup = CreateFrame("Frame", "DudesFlexBindingsBonusAnchorSelectorPopup", UIParent)
+        bonusAnchorSelectorPopup:SetWidth(134)
+        bonusAnchorSelectorPopup:SetHeight(#BONUS_ANCHOR_OPTIONS * 24 + 10)
+        bonusAnchorSelectorPopup:SetFrameStrata("TOOLTIP")
+        bonusAnchorSelectorPopup:SetFrameLevel(100)
+        setBackdrop(bonusAnchorSelectorPopup, 0.045, 0.052, 0.065, 1)
+        bonusAnchorSelectorPopup.buttons = {}
+        for i, option in ipairs(BONUS_ANCHOR_OPTIONS) do
+            local button = CreateFrame("Button", nil, bonusAnchorSelectorPopup)
+            button:SetWidth(118)
+            button:SetHeight(22)
+            button:SetPoint("TOPLEFT", bonusAnchorSelectorPopup, "TOPLEFT", 8, -6 - (i - 1) * 24)
+            button.value = option.value
+            styleButton(button)
+            button.text = createText(button, 11)
+            button.text:SetAllPoints(button)
+            button.text:SetJustifyH("CENTER")
+            button.text:SetText(option.text)
+            button:SetScript("OnClick", function(self)
+                local owner = bonusAnchorSelectorPopup.owner
+                if owner then
+                    ADDON.GetSettings().bonusBarAnchor = self.value
+                    owner.refresh()
+                    refreshBonusBarSettingsControls()
+                    if ADDON.RefreshEditorBindings then
+                        ADDON.RefreshEditorBindings()
+                    end
+                    if ADDON.RefreshBonusBar then
+                        ADDON.RefreshBonusBar()
+                    end
+                end
+                bonusAnchorSelectorPopup:Hide()
+            end)
+            bonusAnchorSelectorPopup.buttons[i] = button
+        end
+        bonusAnchorSelectorPopup:Hide()
+    end
+
+    if bonusAnchorSelectorPopup:IsShown() and bonusAnchorSelectorPopup.owner == selector then
+        bonusAnchorSelectorPopup:Hide()
+        return
+    end
+
+    local value = ADDON.GetSettings().bonusBarAnchor or "topLeft"
+    for _, button in ipairs(bonusAnchorSelectorPopup.buttons or {}) do
+        if button.value == value then
+            button:SetBackdropBorderColor(1, 0.82, 0.1, 1)
+        else
+            button:SetBackdropBorderColor(BORDER_R, BORDER_G, BORDER_B, 1)
+        end
+    end
+    bonusAnchorSelectorPopup.owner = selector
+    bonusAnchorSelectorPopup:ClearAllPoints()
+    bonusAnchorSelectorPopup:SetPoint("TOPLEFT", selector, "BOTTOMLEFT", 0, -4)
+    bonusAnchorSelectorPopup:Show()
+end
+
+local function showBonusGrowthSelector(selector)
+    if not selector or not selector:IsEnabled() then
+        return
+    end
+    if bonusAnchorSelectorPopup then
+        bonusAnchorSelectorPopup:Hide()
+    end
+    if not bonusGrowthSelectorPopup then
+        bonusGrowthSelectorPopup = CreateFrame("Frame", "DudesFlexBindingsBonusGrowthSelectorPopup", UIParent)
+        bonusGrowthSelectorPopup:SetWidth(118)
+        bonusGrowthSelectorPopup:SetHeight(#BONUS_GROWTH_OPTIONS * 24 + 10)
+        bonusGrowthSelectorPopup:SetFrameStrata("TOOLTIP")
+        bonusGrowthSelectorPopup:SetFrameLevel(100)
+        setBackdrop(bonusGrowthSelectorPopup, 0.045, 0.052, 0.065, 1)
+        bonusGrowthSelectorPopup.buttons = {}
+        for i, option in ipairs(BONUS_GROWTH_OPTIONS) do
+            local button = CreateFrame("Button", nil, bonusGrowthSelectorPopup)
+            button:SetWidth(102)
+            button:SetHeight(22)
+            button:SetPoint("TOPLEFT", bonusGrowthSelectorPopup, "TOPLEFT", 8, -6 - (i - 1) * 24)
+            button.value = option.value
+            styleButton(button)
+            button.text = createText(button, 11)
+            button.text:SetAllPoints(button)
+            button.text:SetJustifyH("CENTER")
+            button.text:SetText(option.text)
+            button:SetScript("OnClick", function(self)
+                local owner = bonusGrowthSelectorPopup.owner
+                if owner then
+                    ADDON.GetSettings().bonusBarGrowthDirection = self.value
+                    owner.refresh()
+                    refreshBonusBarSettingsControls()
+                    if ADDON.RefreshEditorBindings then
+                        ADDON.RefreshEditorBindings()
+                    end
+                    if ADDON.RefreshBonusBar then
+                        ADDON.RefreshBonusBar()
+                    end
+                end
+                bonusGrowthSelectorPopup:Hide()
+            end)
+            bonusGrowthSelectorPopup.buttons[i] = button
+        end
+        bonusGrowthSelectorPopup:Hide()
+    end
+
+    if bonusGrowthSelectorPopup:IsShown() and bonusGrowthSelectorPopup.owner == selector then
+        bonusGrowthSelectorPopup:Hide()
+        return
+    end
+
+    local value = ADDON.GetSettings().bonusBarGrowthDirection or "right"
+    for _, button in ipairs(bonusGrowthSelectorPopup.buttons or {}) do
+        if button.value == value then
+            button:SetBackdropBorderColor(1, 0.82, 0.1, 1)
+        else
+            button:SetBackdropBorderColor(BORDER_R, BORDER_G, BORDER_B, 1)
+        end
+    end
+    bonusGrowthSelectorPopup.owner = selector
+    bonusGrowthSelectorPopup:ClearAllPoints()
+    bonusGrowthSelectorPopup:SetPoint("TOPLEFT", selector, "BOTTOMLEFT", 0, -4)
+    bonusGrowthSelectorPopup:Show()
+end
+
+local function createBonusAnchorSelector(parent, anchor, yOffset)
+    local selector = CreateFrame("Button", nil, parent)
+    selector:SetWidth(118)
+    selector:SetHeight(24)
+    selector:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, yOffset)
+    styleButton(selector)
+    selector.valueText = createText(selector, 11)
+    selector.valueText:SetAllPoints(selector)
+    selector.valueText:SetJustifyH("CENTER")
+    selector.text = selector:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    selector.text:SetPoint("LEFT", selector, "RIGHT", 8, 1)
+    selector.text:SetText("Bonus-Bar Anker")
+    selector:SetScript("OnClick", function(self)
+        showBonusAnchorSelector(self)
+    end)
+    selector.refresh = function()
+        selector.valueText:SetText(getBonusAnchorText(ADDON.GetSettings().bonusBarAnchor or "topLeft"))
+    end
+    selector.refresh()
+    return selector
+end
+
+local function createBonusGrowthSelector(parent, anchor, yOffset)
+    local selector = CreateFrame("Button", nil, parent)
+    selector:SetWidth(118)
+    selector:SetHeight(24)
+    selector:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, yOffset)
+    styleButton(selector)
+    selector.valueText = createText(selector, 11)
+    selector.valueText:SetAllPoints(selector)
+    selector.valueText:SetJustifyH("CENTER")
+    selector.text = selector:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    selector.text:SetPoint("LEFT", selector, "RIGHT", 8, 1)
+    selector.text:SetText("Bonus-Bar Wachstum")
+    selector:SetScript("OnClick", function(self)
+        showBonusGrowthSelector(self)
+    end)
+    selector.refresh = function()
+        selector.valueText:SetText(getBonusGrowthText(ADDON.GetSettings().bonusBarGrowthDirection or "right"))
+    end
+    selector.refresh()
+    return selector
 end
 
 local function raiseSettingsPopup(popup)
@@ -323,16 +648,31 @@ local function createOptionsPanel()
     optionsPanel = CreateFrame("Frame", "DudesFlexBindingsOptionsPanel", UIParent)
     optionsPanel.name = "DudesFlexBindings"
 
-    local title = createText(optionsPanel, 18)
-    title:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 16, -16)
+    optionsPanel.scrollFrame = CreateFrame("ScrollFrame", "DudesFlexBindingsOptionsScrollFrame", optionsPanel, "UIPanelScrollFrameTemplate")
+    optionsPanel.content = CreateFrame("Frame", "DudesFlexBindingsOptionsContent", optionsPanel.scrollFrame)
+    optionsPanel.scrollFrame:SetScrollChild(optionsPanel.content)
+    optionsPanel.scrollFrame:EnableMouseWheel(true)
+    optionsPanel.scrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        local scrollBar = _G[self:GetName() .. "ScrollBar"]
+        if scrollBar then
+            local value = scrollBar:GetValue() or 0
+            local minValue, maxValue = scrollBar:GetMinMaxValues()
+            scrollBar:SetValue(clamp(value - delta * 32, minValue or 0, maxValue or 0))
+        end
+    end)
+
+    local content = optionsPanel.content
+
+    local title = createText(content, 18)
+    title:SetPoint("TOPLEFT", content, "TOPLEFT", 16, -16)
     title:SetText("DudesFlexBindings")
 
-    local subtitle = createText(optionsPanel, 11)
+    local subtitle = createText(content, 11)
     subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
     subtitle:SetText("Character and spec specific key macros.")
     subtitle:SetTextColor(0.8, 0.8, 0.8)
 
-    optionsPanel.minimapCheckbox = CreateFrame("CheckButton", nil, optionsPanel, "UICheckButtonTemplate")
+    optionsPanel.minimapCheckbox = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
     optionsPanel.minimapCheckbox:SetWidth(22)
     optionsPanel.minimapCheckbox:SetHeight(22)
     optionsPanel.minimapCheckbox:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", -2, -18)
@@ -345,10 +685,22 @@ local function createOptionsPanel()
         refreshMinimapButton()
     end)
 
-    local openLayoutButton = CreateFrame("Button", nil, optionsPanel, "UIPanelButtonTemplate")
+    optionsPanel.characterInterfaceBindingsCheckbox = createCheckbox(content, optionsPanel.minimapCheckbox, -4, "Charakterspezifische Interface Belegungen", function()
+        return ADDON.IsCharacterBindingSetEnabled and ADDON.IsCharacterBindingSetEnabled()
+    end, function(value)
+        if ADDON.SetCharacterBindingSetEnabled and not ADDON.SetCharacterBindingSetEnabled(value) and optionsPanel.characterInterfaceBindingsCheckbox then
+            optionsPanel.characterInterfaceBindingsCheckbox:SetChecked(ADDON.IsCharacterBindingSetEnabled and ADDON.IsCharacterBindingSetEnabled() or false)
+        end
+    end, function()
+        if ADDON.RefreshEditorBindings then
+            ADDON.RefreshEditorBindings()
+        end
+    end)
+
+    local openLayoutButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
     openLayoutButton:SetWidth(160)
     openLayoutButton:SetHeight(24)
-    openLayoutButton:SetPoint("TOPLEFT", optionsPanel.minimapCheckbox, "BOTTOMLEFT", 2, -16)
+    openLayoutButton:SetPoint("TOPLEFT", optionsPanel.characterInterfaceBindingsCheckbox, "BOTTOMLEFT", 2, -16)
     openLayoutButton:SetText("Layout Editor")
     styleButton(openLayoutButton)
     openLayoutButton:SetScript("OnClick", function()
@@ -357,21 +709,22 @@ local function createOptionsPanel()
         end
     end)
 
-    local layoutTitle = createText(optionsPanel, 15)
+    local layoutTitle = createText(content, 15)
     layoutTitle:SetPoint("TOPLEFT", openLayoutButton, "BOTTOMLEFT", -2, -24)
     layoutTitle:SetText("Layouts")
 
-    local saveLayoutButton = CreateFrame("Button", nil, optionsPanel, "UIPanelButtonTemplate")
+    local saveLayoutButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
     saveLayoutButton:SetWidth(120)
     saveLayoutButton:SetHeight(24)
     saveLayoutButton:SetPoint("TOPLEFT", layoutTitle, "BOTTOMLEFT", 0, -10)
     saveLayoutButton:SetText("Speichern")
     styleButton(saveLayoutButton)
     saveLayoutButton:SetScript("OnClick", showSaveLayoutDialog)
+    optionsPanel.saveLayoutButton = saveLayoutButton
 
     optionsPanel.layoutRows = layoutRows
     for i = 1, 8 do
-        local row = CreateFrame("Frame", nil, optionsPanel)
+        local row = CreateFrame("Frame", nil, content)
         row:SetWidth(260)
         row:SetHeight(34)
         row:SetPoint("TOPLEFT", saveLayoutButton, "BOTTOMLEFT", 0, -8 - (i - 1) * 38)
@@ -414,10 +767,39 @@ local function createOptionsPanel()
         layoutRows[i] = row
     end
 
+    local bonusTitle = createText(content, 15)
+    bonusTitle:SetPoint("TOPLEFT", layoutRows[8], "BOTTOMLEFT", 0, -18)
+    bonusTitle:SetText("Bonus-Bar")
+    optionsPanel.bonusTitle = bonusTitle
+
+    optionsPanel.bonusBarCheckbox = createCheckbox(content, bonusTitle, -8, "Bonus-Bar anzeigen", function()
+        return ADDON.GetSettings().showBonusBar
+    end, function(value)
+        ADDON.GetSettings().showBonusBar = value
+    end)
+
+    optionsPanel.alignBonusBarCheckbox = createCheckbox(content, optionsPanel.bonusBarCheckbox, -2, "Bonus-Bar ausrichten", function()
+        return ADDON.GetSettings().alignBonusBar
+    end, function(value)
+        ADDON.GetSettings().alignBonusBar = value
+    end)
+
+    optionsPanel.bonusBarAnchorSelector = createBonusAnchorSelector(content, optionsPanel.alignBonusBarCheckbox, -2)
+
+    optionsPanel.bonusBarGrowthSelector = createBonusGrowthSelector(content, optionsPanel.bonusBarAnchorSelector, -2)
+
+    optionsPanel.showBonusBarBindingsCheckbox = createCheckbox(content, optionsPanel.bonusBarGrowthSelector, -2, "Bonus-Bar Bindings anzeigen", function()
+        return ADDON.GetSettings().showBonusBarBindings
+    end, function(value)
+        ADDON.GetSettings().showBonusBarBindings = value
+    end)
+
     optionsPanel:SetScript("OnShow", function()
+        layoutOptionsPanel()
         ADDON.RefreshSettings()
     end)
-    optionsPanel:SetScript("OnSizeChanged", layoutSettingsRows)
+    optionsPanel:SetScript("OnSizeChanged", layoutOptionsPanel)
+    layoutOptionsPanel()
 
     InterfaceOptions_AddCategory(optionsPanel)
 
@@ -429,6 +811,7 @@ function ADDON.RefreshSettings()
         return
     end
     optionsPanel.minimapCheckbox:SetChecked(ADDON.GetSettings().showMinimapButton)
+    refreshBonusBarSettingsControls()
     refreshLayoutRows()
 end
 

@@ -8,6 +8,7 @@
 
 Core.lua
 Icons.lua
+BonusBar.lua
 Overlay.lua
 Editor.lua
 Settings.lua

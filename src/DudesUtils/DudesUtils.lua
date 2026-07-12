@@ -1,6 +1,7 @@
 DudesUtils = DudesUtils or {}
 DudesUtils.Array = DudesUtils.Array or {}
 DudesUtils.String = DudesUtils.String or {}
+DudesUtils.Table = DudesUtils.Table or {}
 DudesUtils.EventHandler = DudesUtils.EventHandler or {}
 
 local hiddenFrame = hiddenFrame or CreateFrame("Frame")
@@ -82,6 +83,58 @@ function DudesUtils.Array.Contains(array, value)
 		end
 	end
 	return false
+end
+
+function DudesUtils.Array.Copy(array)
+	local copy = {}
+	for i, value in ipairs(array or {}) do
+		if type(value) == "table" then
+			copy[i] = DudesUtils.Table.Copy(value)
+		else
+			copy[i] = value
+		end
+	end
+	return copy
+end
+
+-- -- -- -- -- -- -- -- TABLE UTILS -- -- -- -- -- -- -- --
+
+function DudesUtils.Table.Copy(source)
+	if type(source) ~= "table" then
+		return source
+	end
+	local copy = {}
+	for key, value in pairs(source) do
+		if type(value) == "table" then
+			copy[key] = DudesUtils.Table.Copy(value)
+		else
+			copy[key] = value
+		end
+	end
+	return copy
+end
+
+function DudesUtils.Table.Equals(a, b)
+	if type(a) ~= "table" or type(b) ~= "table" then
+		return a == b
+	end
+	a = a or {}
+	b = b or {}
+	for key, value in pairs(a) do
+		if type(value) == "table" then
+			if not DudesUtils.Table.Equals(value, b[key]) then
+				return false
+			end
+		elseif b[key] ~= value then
+			return false
+		end
+	end
+	for key in pairs(b) do
+		if a[key] == nil then
+			return false
+		end
+	end
+	return true
 end
 
 -- -- -- -- -- -- -- -- NEXT UPDATE -- -- -- -- -- -- -- --

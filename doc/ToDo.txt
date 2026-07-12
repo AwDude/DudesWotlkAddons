@@ -3,39 +3,16 @@
     - maybe with AK 10 / 25 auto mode?
 
 DudesKeyMakros
-1) Wenn man alle Ability-Tasten direkt mit Makros bindet, könnte man keine posses / bonus / fahrzeug Bar mehr nutzen, deshab folgende Änderungen:
-    - im tasten editor einen neuen tab "Bonus-Bar" dem interface/makro switcher hinzufügen
-    - dort wie bei den interface bindings für jeden modifier eine zeile anzeigen
-    - wenn auf dem modifier schon eine interface aktion liegt, die zeile sperren und ein warning anzeigen
-    - pro modifier zeile kann man dann mit einem selektor die nummer auswählen, die der position auf der bonusbar entspricht
-        - diese bonus bar action wird beim drücken der tasten-kombination somit ausgeführt, sofern eine bonusbar (im blizzard interface) aktiv ist
-        - das gilt auch wenn ein makro auf der tasten-kombination gebunden ist, da dieses wahrscheinlich eh nichts machen würde
-            - bonus bar actions können nicht auf interface aktionen gebunden werden
-        - denke an den confirmation dialog wenn die bonus-bar action nummer schon wo anders gebindet ist
-    - man kann im selektor auch "-" auswählen um keine bonusbar action zu binden (default)
-    - falls mind eine bonusbar aktion für die taste ausgewählt ist:
-        - im layout oben rechtsbündig auf höhe des tasten namens in den farben des modifiers die nummern der gebundenen bonusbar actions anzeigen
-        - schriftgröße kleiner als der tasten name
-    - in den addon einstellungen:
-        - gibt es eine checkbox "Bonus-Bar anzeigen"
-        - wenn "Bonus-Bar anzeigen" aktiviert
-            - gibt es eine "Bonus-Bar ausrichten" checkbox
-            - gibt es eine "Bonus-Bar Icons zentrieren" checkbox
-            - gibt es eine "Bonus-Bar Bindings anzeigen" checkbox
-        - wenn Bonus-Bar ausrichten aktiviert
-            - man sieht einen rahmen im spiel der die bonusbar leiste darstellt
-            - man kann den rahmen bewegen
-            - man kann die größe des rahmens ändern
-        - sobald im spiel wirklich eine bonusbar aktiv ist (übernommen bei Blutkönigin in ICC, oder man sitzt im Fahrzeug, etc)
-            - zeigt die addon bonusbar alle icons der bonusbar an (entweder linksbündig oder zentriert)
-            - innerhalb jedes Icons wird unten rechts das akutell zugeordnete key binding als text angezeigt (z.b. <s>T), sofern "Bonus-Bar Bindings anzeigen" aktiviert ist
-
-2) code cleanup
-    - entferne ungenutzten und alten Code
-    - Gebe dem aktuellen Code eine gute Architektur und Struktur
-    - Vereinheitliche, Modularisiere und verwende Code so gut es geht wieder
-    - Benutze DudesUtils
-        - nutze vorhandene DudeUtils Funktionen soweit sinnvoll (z.b. für eventlistener)
-        - sehr allgemeine utility funktionen bitte in die DudesUtils auslagern (z.b. für arrays / tables)
-        - Schaue dir die aktuellen funktionen in DudeUtils an und mache es im selben stil
-        - verändere keine existierenden funktionen in den DudeUtils, da diese von anderen addons verwendet werden
+- wenn BonusBar aktiv: die icons sollen den typischen abgerundeten rahmen haben, den wir auch sonst überall für UI Elemente benutzen
+- In den Bonusbar Einstellungen (unter einstellungen & bonusbar editor)
+    - Die Checkbox "Bonus-Bar Bindings anzeigen" soll "Bonus-Bar Belegungen anzeigen" heißen
+    - füge eine option zum anpassen der binding text größe hinzu, wenn checkbox aktiviert
+- wenn bonusbar ausrichten aktiv:
+    - füge neben die "vertikal zentrieren" und "horizontal zentrieren" buttons noch einen "Ausrichten ausblenden" button hinzu
+    - denke daran es in sync mit der checkbox unter bonusbar editor und einstellungen zu halten
+- wenn man den haken aus der checkbox "Charakterspezifische Interface Belegungen" entfernen will
+    - sollte man ein confirmation dialog bekommen
+    - denn dadurch gehen alle aktuellen interface belegungen verloren
+    - und manche makros / bonus-bar bindings werden eventuell deaktiviert, da danach eine interface aktion darauf liegen kann
+    - zeige diese infos im confirmation dialog an
+    - stelle sicher, dass der code das aktuell auch korrekt alles abfängt und richtig setzt
