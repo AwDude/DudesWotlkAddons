@@ -176,6 +176,12 @@ local function clearButtonActionState(button)
     if button.unusableOverlay then
         button.unusableOverlay:Hide()
     end
+    if button.SetAttribute and not InCombatLockdown() then
+        button:SetAttribute("type", nil)
+        button:SetAttribute("type1", nil)
+        button:SetAttribute("clickbutton", nil)
+        button:SetAttribute("clickbutton1", nil)
+    end
     button.activeSlot = nil
 end
 
@@ -414,6 +420,23 @@ local function showButtonTooltip(button)
     GameTooltip:Show()
 end
 
+local function updateButtonClickTarget(button, actionInfo, clickable)
+    if not button or not button.SetAttribute or InCombatLockdown() then
+        return
+    end
+    if clickable and actionInfo and actionInfo.sourceButton then
+        button:SetAttribute("type", "click")
+        button:SetAttribute("type1", "click")
+        button:SetAttribute("clickbutton", actionInfo.sourceButton)
+        button:SetAttribute("clickbutton1", actionInfo.sourceButton)
+    else
+        button:SetAttribute("type", nil)
+        button:SetAttribute("type1", nil)
+        button:SetAttribute("clickbutton", nil)
+        button:SetAttribute("clickbutton1", nil)
+    end
+end
+
 local function hideButtonTooltip()
     if GameTooltip then
         GameTooltip:Hide()
@@ -620,7 +643,8 @@ function ADDON.RefreshBonusBar()
             setButtonFrameStyle(button, true, true)
             button.activeSlot = activeSlot
             hookSourceButton(activeSlot)
-            button:EnableMouse(settings.showBonusBarTooltips and true or false)
+            updateButtonClickTarget(button, activeSlot, settings.clickBonusBarButtons)
+            button:EnableMouse((settings.showBonusBarTooltips or settings.clickBonusBarButtons) and true or false)
             button.icon:SetTexture(activeSlot.texture)
             button.icon:SetVertexColor(1, 1, 1, 1)
             button.icon:SetAlpha(1)
@@ -695,8 +719,9 @@ function ADDON.QueueBonusBarRefresh(delay)
 end
 
 local function createButton(parent, index)
-    local button = CreateFrame("Frame", nil, parent)
+    local button = CreateFrame("Button", nil, parent, "SecureActionButtonTemplate")
     button:EnableMouse(false)
+    button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     setBackdrop(button, 0.04, 0.048, 0.06, 0.65)
     button:SetScript("OnEnter", showButtonTooltip)
     button:SetScript("OnLeave", hideButtonTooltip)

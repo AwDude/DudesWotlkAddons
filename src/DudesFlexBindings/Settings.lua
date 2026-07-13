@@ -314,6 +314,11 @@ local function refreshBonusBarSettingsControls()
         setFrameEnabled(optionsPanel.showBonusBarTooltipsCheckbox, enabled)
         showFrame(optionsPanel.showBonusBarTooltipsCheckbox, enabled)
     end
+    if optionsPanel.clickBonusBarButtonsCheckbox then
+        optionsPanel.clickBonusBarButtonsCheckbox:SetChecked(settings.clickBonusBarButtons and true or false)
+        setFrameEnabled(optionsPanel.clickBonusBarButtonsCheckbox, enabled)
+        showFrame(optionsPanel.clickBonusBarButtonsCheckbox, enabled)
+    end
     if optionsPanel.bonusBarBindingSizeControl then
         optionsPanel.bonusBarBindingSizeControl.refresh()
         setFrameEnabled(optionsPanel.bonusBarBindingSizeControl.decrease, enabled and settings.showBonusBarBindings)
@@ -640,6 +645,52 @@ local function raiseSettingsPopup(popup)
     stylePopupButtons(popup)
 end
 
+local function showSaveLayoutError(popup, message)
+    if not popup then
+        return
+    end
+    if not popup.saveLayoutErrorText then
+        popup.saveLayoutErrorText = popup:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        popup.saveLayoutErrorText:SetPoint("TOPLEFT", popup.editBox, "BOTTOMLEFT", 0, -6)
+        popup.saveLayoutErrorText:SetPoint("TOPRIGHT", popup.editBox, "BOTTOMRIGHT", 0, -6)
+        popup.saveLayoutErrorText:SetJustifyH("LEFT")
+        popup.saveLayoutErrorText:SetTextColor(1, 0.25, 0.18)
+    end
+    popup.saveLayoutErrorText:SetText(message or "")
+    popup.saveLayoutErrorText:Show()
+    if popup.saveLayoutBaseHeight then
+        popup:SetHeight(popup.saveLayoutBaseHeight + 18)
+    end
+end
+
+local function hideSaveLayoutError(popup)
+    if popup and popup.saveLayoutErrorText then
+        popup.saveLayoutErrorText:Hide()
+    end
+    if popup and popup.saveLayoutBaseHeight then
+        popup:SetHeight(popup.saveLayoutBaseHeight)
+    end
+end
+
+local function saveLayoutFromDialog(popup)
+    if not popup then
+        return false
+    end
+    local name = popup.editBox and popup.editBox:GetText() or ""
+    if ADDON.SaveAppliedLayoutProfile and ADDON.SaveAppliedLayoutProfile(name) then
+        hideSaveLayoutError(popup)
+        popup:Hide()
+        refreshLayoutRows()
+        return true
+    end
+    showSaveLayoutError(popup, "Layout-Name muss eindeutig sein")
+    if popup.editBox then
+        popup.editBox:SetFocus()
+        popup.editBox:HighlightText()
+    end
+    return false
+end
+
 local function showSaveLayoutDialog()
     StaticPopupDialogs["DUDES_FLEX_BINDINGS_SAVE_LAYOUT_SETTINGS"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_SAVE_LAYOUT_SETTINGS"] or {
         text = "Layout-Name",
@@ -648,26 +699,27 @@ local function showSaveLayoutDialog()
         hasEditBox = 1,
         maxLetters = 64,
         OnAccept = function(self)
-            local name = self.editBox and self.editBox:GetText() or ""
-            if ADDON.SaveAppliedLayoutProfile and ADDON.SaveAppliedLayoutProfile(name) then
-                refreshLayoutRows()
-            else
-                DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffDudesFlexBindings:|r Layout-Name muss eindeutig sein.")
-            end
+            saveLayoutFromDialog(self)
         end,
         OnShow = function(self)
+            self.saveLayoutBaseHeight = self:GetHeight()
             if self.editBox then
                 self.editBox:SetText("")
                 self.editBox:SetFocus()
             end
+            hideSaveLayoutError(self)
+            local button = _G[self:GetName() .. "Button1"]
+            if button then
+                button:SetScript("OnClick", function()
+                    saveLayoutFromDialog(self)
+                end)
+            end
+        end,
+        OnHide = function(self)
+            hideSaveLayoutError(self)
         end,
         EditBoxOnEnterPressed = function(self)
-            local parent = self:GetParent()
-            local name = self:GetText() or ""
-            if ADDON.SaveAppliedLayoutProfile and ADDON.SaveAppliedLayoutProfile(name) then
-                parent:Hide()
-                refreshLayoutRows()
-            end
+            saveLayoutFromDialog(self:GetParent())
         end,
         timeout = 0,
         whileDead = 1,
@@ -918,6 +970,15 @@ local function createOptionsPanel()
         return ADDON.GetSettings().showBonusBarTooltips
     end, function(value)
         ADDON.GetSettings().showBonusBarTooltips = value
+        if ADDON.RefreshEditorBindings then
+            ADDON.RefreshEditorBindings()
+        end
+    end)
+
+    optionsPanel.clickBonusBarButtonsCheckbox = createCheckbox(content, optionsPanel.showBonusBarTooltipsCheckbox, -2, "Bonusleisten Buttons klickbar", function()
+        return ADDON.GetSettings().clickBonusBarButtons
+    end, function(value)
+        ADDON.GetSettings().clickBonusBarButtons = value
         if ADDON.RefreshEditorBindings then
             ADDON.RefreshEditorBindings()
         end

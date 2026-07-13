@@ -14,6 +14,8 @@ local selectedIconButtons = {}
 local selectedIconRows = {}
 local draggedIconIndex
 local iconListOffset = 1
+local iconSuggestionOffset = 1
+local actionListOffset = 1
 local matrixCellButtons = {}
 local matrixRowLabels = {}
 local matrixRowActionTexts = {}
@@ -38,7 +40,6 @@ local saveMacroDraft
 local editorMode = "interface"
 local suppressMacroSave
 local suppressIconSave
-local suppressIconScroll
 local macroDirty
 local bonusBarSelectorPopup
 local bonusAnchorSelectorPopup
@@ -50,6 +51,8 @@ local ICON_ROW_START_Y = -294
 local ICON_ROW_STEP = 34
 local ICON_SEARCH_GAP = 10
 local ICON_SUGGESTION_GAP = 34
+local ICON_SUGGESTION_COLUMNS = 3
+local ICON_SUGGESTION_ROWS = 4
 local SECTION_TITLE_SIZE = 15
 local SECTION_TITLE_Y = -108
 local SECTION_CONTENT_Y = -138
@@ -288,15 +291,21 @@ local function layoutIconControls()
         row:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, ICON_ROW_START_Y - (i - 1) * ICON_ROW_STEP)
     end
 
-    if editor.selectedIconScrollBar then
-        editor.selectedIconScrollBar:ClearAllPoints()
-        editor.selectedIconScrollBar:SetPoint("TOPLEFT", editor, "TOPLEFT", 606, ICON_ROW_START_Y)
-        editor.selectedIconScrollBar:SetHeight(#selectedIconRows * ICON_ROW_STEP - 4)
-    end
-
     if editor.iconEmptyText then
         editor.iconEmptyText:ClearAllPoints()
         editor.iconEmptyText:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, ICON_ROW_START_Y)
+    end
+    if editor.iconNextButton then
+        editor.iconNextButton:ClearAllPoints()
+        editor.iconNextButton:SetPoint("TOPRIGHT", editor, "TOPRIGHT", -22, ICON_ROW_START_Y + 1)
+    end
+    if editor.iconPageText then
+        editor.iconPageText:ClearAllPoints()
+        editor.iconPageText:SetPoint("RIGHT", editor.iconNextButton, "LEFT", -4, 0)
+    end
+    if editor.iconPrevButton then
+        editor.iconPrevButton:ClearAllPoints()
+        editor.iconPrevButton:SetPoint("RIGHT", editor.iconPageText, "LEFT", -4, 0)
     end
     if editor.iconSearchTitle then
         editor.iconSearchTitle:ClearAllPoints()
@@ -306,28 +315,35 @@ local function layoutIconControls()
         editor.iconSearch:ClearAllPoints()
         editor.iconSearch:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, searchY)
     end
-    if editor.iconOrText then
-        editor.iconOrText:ClearAllPoints()
-        editor.iconOrText:SetPoint("LEFT", editor.iconSearch, "RIGHT", 12, 0)
+    if editor.iconSearchNextButton then
+        editor.iconSearchNextButton:ClearAllPoints()
+        editor.iconSearchNextButton:SetPoint("TOPRIGHT", editor, "TOPRIGHT", -22, searchY + 1)
     end
-    if editor.autoMatrixButton then
-        editor.autoMatrixButton:ClearAllPoints()
-        editor.autoMatrixButton:SetPoint("LEFT", editor.iconOrText, "RIGHT", 10, 0)
+    if editor.iconSearchPageText then
+        editor.iconSearchPageText:ClearAllPoints()
+        editor.iconSearchPageText:SetPoint("RIGHT", editor.iconSearchNextButton, "LEFT", -4, 0)
+    end
+    if editor.iconSearchPrevButton then
+        editor.iconSearchPrevButton:ClearAllPoints()
+        editor.iconSearchPrevButton:SetPoint("RIGHT", editor.iconSearchPageText, "LEFT", -4, 0)
     end
 
     for i, button in ipairs(suggestionButtons) do
         button:ClearAllPoints()
-        button:SetPoint("TOPLEFT", editor, "TOPLEFT", 22 + ((i - 1) % 3) * 196, suggestionY - math.floor((i - 1) / 3) * 32)
+        button:SetPoint("TOPLEFT", editor, "TOPLEFT", 22 + ((i - 1) % ICON_SUGGESTION_COLUMNS) * 196, suggestionY - math.floor((i - 1) / ICON_SUGGESTION_COLUMNS) * 32)
     end
 end
 
 local function updateSelectedIcons()
-    local maxOffset = math.max(1, #selectedIcons - #selectedIconRows + 1)
-    if iconListOffset > maxOffset then
-        iconListOffset = maxOffset
-    elseif iconListOffset < 1 then
-        iconListOffset = 1
+    local pageSize = #selectedIconRows
+    local totalPages = math.max(1, math.ceil(#selectedIcons / pageSize))
+    local currentPage = math.floor((iconListOffset - 1) / pageSize) + 1
+    if currentPage > totalPages then
+        currentPage = totalPages
+    elseif currentPage < 1 then
+        currentPage = 1
     end
+    iconListOffset = (currentPage - 1) * pageSize + 1
 
     layoutIconControls()
 
@@ -357,40 +373,27 @@ local function updateSelectedIcons()
         end
     end
 
-    if editor and editor.selectedIconScrollBar then
-        suppressIconScroll = true
-        editor.selectedIconScrollBar:SetMinMaxValues(1, maxOffset)
-        editor.selectedIconScrollBar:SetValueStep(1)
-        editor.selectedIconScrollBar:SetValue(iconListOffset)
-        suppressIconScroll = nil
-
-        if #selectedIcons > #selectedIconRows then
-            editor.selectedIconScrollBar:Show()
-            if editor.selectedIconScrollBar.ScrollUpButton then
-                editor.selectedIconScrollBar.ScrollUpButton:Show()
+    if editor and editor.iconPrevButton then
+        if #selectedIcons > pageSize then
+            editor.iconPrevButton:Show()
+            editor.iconPageText:Show()
+            editor.iconNextButton:Show()
+            editor.iconPageText:SetText(tostring(currentPage) .. "/" .. tostring(totalPages))
+            if currentPage <= 1 then
+                editor.iconPrevButton:Disable()
+            else
+                editor.iconPrevButton:Enable()
             end
-            if editor.selectedIconScrollBar.ScrollDownButton then
-                editor.selectedIconScrollBar.ScrollDownButton:Show()
+            if currentPage >= totalPages then
+                editor.iconNextButton:Disable()
+            else
+                editor.iconNextButton:Enable()
             end
         else
-            editor.selectedIconScrollBar:Hide()
-            if editor.selectedIconScrollBar.ScrollUpButton then
-                editor.selectedIconScrollBar.ScrollUpButton:Hide()
-            end
-            if editor.selectedIconScrollBar.ScrollDownButton then
-                editor.selectedIconScrollBar.ScrollDownButton:Hide()
-            end
+            editor.iconPrevButton:Hide()
+            editor.iconPageText:Hide()
+            editor.iconNextButton:Hide()
         end
-    end
-
-    if editor and editor.iconPageText then
-        editor.iconPageText:Hide()
-    end
-    if editor and editor.iconPrevButton then
-        editor.iconPrevButton:Hide()
-    end
-    if editor and editor.iconNextButton then
-        editor.iconNextButton:Hide()
     end
 end
 
@@ -408,7 +411,7 @@ local function addSelectedIcon(texture, name, text)
         useName = false,
     })
     if #selectedIcons > #selectedIconRows then
-        iconListOffset = math.max(1, #selectedIcons - #selectedIconRows + 1)
+        iconListOffset = (math.ceil(#selectedIcons / #selectedIconRows) - 1) * #selectedIconRows + 1
     end
     updateSelectedIcons()
     if currentKey then
@@ -723,8 +726,48 @@ function refreshSuggestions()
     local macrotext = editor.macroEditBox:GetText() or ""
     local query = editor.iconSearch and editor.iconSearch:GetText() or ""
     local suggestions = ADDON.SearchIcons and ADDON.SearchIcons(query, macrotext) or ADDON.GetMacroIconSuggestions(macrotext)
+    local pageSize = #suggestionButtons
+    if pageSize <= 0 then
+        return
+    end
+    local totalPages = math.max(1, math.ceil(#suggestions / pageSize))
+    local currentPage = math.floor((iconSuggestionOffset - 1) / pageSize) + 1
+    if currentPage > totalPages then
+        currentPage = totalPages
+    elseif currentPage < 1 then
+        currentPage = 1
+    end
+    iconSuggestionOffset = (currentPage - 1) * pageSize + 1
     for i = 1, #suggestionButtons do
-        setSuggestionButton(suggestionButtons[i], suggestions[i])
+        setSuggestionButton(suggestionButtons[i], suggestions[iconSuggestionOffset + i - 1])
+    end
+    if editor.iconSearchPrevButton then
+        if #suggestions > pageSize and editorMode == "macro" and not editor.macroLocked then
+            editor.iconSearchPrevButton.hasPages = true
+            editor.iconSearchNextButton.hasPages = true
+            editor.iconSearchPageText.hasPages = true
+            editor.iconSearchPrevButton:Show()
+            editor.iconSearchNextButton:Show()
+            editor.iconSearchPageText:Show()
+            editor.iconSearchPageText:SetText(tostring(currentPage) .. "/" .. tostring(totalPages))
+            if currentPage <= 1 then
+                editor.iconSearchPrevButton:Disable()
+            else
+                editor.iconSearchPrevButton:Enable()
+            end
+            if currentPage >= totalPages then
+                editor.iconSearchNextButton:Disable()
+            else
+                editor.iconSearchNextButton:Enable()
+            end
+        else
+            editor.iconSearchPrevButton.hasPages = nil
+            editor.iconSearchNextButton.hasPages = nil
+            editor.iconSearchPageText.hasPages = nil
+            editor.iconSearchPrevButton:Hide()
+            editor.iconSearchNextButton:Hide()
+            editor.iconSearchPageText:Hide()
+        end
     end
 end
 
@@ -1180,6 +1223,7 @@ local function showResetKeyDialog()
         OnAccept = function(self)
             if self.data and self.data.key and ADDON.ClearAllBindingsForKey then
                 ADDON.ClearAllBindingsForKey(self.data.key)
+                macroDirty = nil
                 ADDON.OpenEditor(self.data.key)
             end
         end,
@@ -1246,7 +1290,9 @@ setEditorMode = function(mode)
     showFrame(editor.characterBindingCheckboxClickArea, showInterface)
     showFrame(editor.actionListTitle, showInterface)
     showFrame(editor.actionFilter, showInterface)
-    showFrame(editor.actionLimitHint, showInterface)
+    showFrame(editor.actionPrevButton, showInterface and editor.actionPrevButton and editor.actionPrevButton.hasPages)
+    showFrame(editor.actionPageText, showInterface and editor.actionPageText and editor.actionPageText.hasPages)
+    showFrame(editor.actionNextButton, showInterface and editor.actionNextButton and editor.actionNextButton.hasPages)
     refreshActionFilterPlaceholder()
     for _, row in ipairs(interfaceRows) do
         showFrame(row, showInterface)
@@ -1293,21 +1339,19 @@ setEditorMode = function(mode)
     showFrame(editor.iconMatrixTitle, showMacro and not editor.macroLocked)
     showFrame(editor.iconEmptyText, showMacro and not editor.macroLocked and #selectedIcons == 0)
     showFrame(editor.iconSearchTitle, showMacro and not editor.macroLocked)
-    showFrame(editor.autoMatrixButton, showMacro and not editor.macroLocked)
-    showFrame(editor.iconOrText, showMacro and not editor.macroLocked)
     showFrame(editor.iconPrevButton, false)
     showFrame(editor.iconPageText, false)
     showFrame(editor.iconNextButton, false)
     showFrame(editor.iconSearch, showMacro and not editor.macroLocked)
+    showFrame(editor.iconSearchPrevButton, showMacro and not editor.macroLocked and editor.iconSearchPrevButton and editor.iconSearchPrevButton.hasPages)
+    showFrame(editor.iconSearchPageText, showMacro and not editor.macroLocked and editor.iconSearchPageText and editor.iconSearchPageText.hasPages)
+    showFrame(editor.iconSearchNextButton, showMacro and not editor.macroLocked and editor.iconSearchNextButton and editor.iconSearchNextButton.hasPages)
     showFrame(editor.iconSearchPlaceholder, showMacro and not editor.macroLocked and editor.iconSearch and (editor.iconSearch:GetText() or "") == "")
     for _, button in ipairs(selectedIconButtons) do
         showFrame(button, false)
     end
     for _, row in ipairs(selectedIconRows) do
         showFrame(row, showMacro and not editor.macroLocked and row.iconIndex and selectedIcons[row.iconIndex])
-    end
-    if editor.selectedIconScrollBar then
-        showFrame(editor.selectedIconScrollBar, showMacro and not editor.macroLocked and #selectedIcons > #selectedIconRows)
     end
     for _, button in ipairs(suggestionButtons) do
         if showMacro and button.texturePath and not editor.macroLocked then
@@ -1702,6 +1746,10 @@ refreshBonusBarEditorSettingsControls = function()
         editor.bonusBarShowTooltipsCheckbox:SetChecked(settings.showBonusBarTooltips and true or false)
         setControlEnabled(editor.bonusBarShowTooltipsCheckbox, enabled)
     end
+    if editor.bonusBarClickButtonsCheckbox then
+        editor.bonusBarClickButtonsCheckbox:SetChecked(settings.clickBonusBarButtons and true or false)
+        setControlEnabled(editor.bonusBarClickButtonsCheckbox, enabled)
+    end
     if editor.bonusBarBindingSizeControl then
         editor.bonusBarBindingSizeControl.refresh()
         local sizeEnabled = enabled and settings.showBonusBarBindings
@@ -1722,9 +1770,21 @@ function refreshActionPicker()
     local filter = editor.actionFilter:GetText() or ""
     local actions = ADDON.GetAvailableBindingActions(filter) or {}
     local variants = currentKey and ADDON.GetDefaultBindingKeysForKey(currentKey) or {}
+    local pageSize = #actionButtons
+    if pageSize <= 0 then
+        return
+    end
+    local totalPages = math.max(1, math.ceil(#actions / pageSize))
+    local currentPage = math.floor((actionListOffset - 1) / pageSize) + 1
+    if currentPage > totalPages then
+        currentPage = totalPages
+    elseif currentPage < 1 then
+        currentPage = 1
+    end
+    actionListOffset = (currentPage - 1) * pageSize + 1
     refreshActionFilterPlaceholder()
     for i, button in ipairs(actionButtons) do
-        local action = actions[i]
+        local action = actions[actionListOffset + i - 1]
         if action then
             button.command = action.command
             button.text:SetText(action.name)
@@ -1742,6 +1802,34 @@ function refreshActionPicker()
         else
             button.command = nil
             button:Hide()
+        end
+    end
+    if editor.actionPrevButton then
+        if #actions > pageSize and editorMode == "interface" then
+            editor.actionPrevButton.hasPages = true
+            editor.actionNextButton.hasPages = true
+            editor.actionPageText.hasPages = true
+            editor.actionPrevButton:Show()
+            editor.actionNextButton:Show()
+            editor.actionPageText:Show()
+            editor.actionPageText:SetText(tostring(currentPage) .. "/" .. tostring(totalPages))
+            if currentPage <= 1 then
+                editor.actionPrevButton:Disable()
+            else
+                editor.actionPrevButton:Enable()
+            end
+            if currentPage >= totalPages then
+                editor.actionNextButton:Disable()
+            else
+                editor.actionNextButton:Enable()
+            end
+        else
+            editor.actionPrevButton.hasPages = nil
+            editor.actionNextButton.hasPages = nil
+            editor.actionPageText.hasPages = nil
+            editor.actionPrevButton:Hide()
+            editor.actionNextButton:Hide()
+            editor.actionPageText:Hide()
         end
     end
 end
@@ -2561,16 +2649,16 @@ function refreshMacroLockState()
         editor.macroEditBox:SetTextColor(0.55, 0.55, 0.55)
         editor.manualIcon:ClearFocus()
         editor.manualIcon:EnableMouse(false)
-        showFrame(editor.autoMatrixButton, false)
-        showFrame(editor.iconOrText, false)
         showFrame(editor.iconEmptyText, false)
         showFrame(editor.iconSearchTitle, false)
         showFrame(editor.iconPrevButton, false)
         showFrame(editor.iconPageText, false)
         showFrame(editor.iconNextButton, false)
         showFrame(editor.iconSearch, false)
+        showFrame(editor.iconSearchPrevButton, false)
+        showFrame(editor.iconSearchPageText, false)
+        showFrame(editor.iconSearchNextButton, false)
         showFrame(editor.iconSearchPlaceholder, false)
-        showFrame(editor.selectedIconScrollBar, false)
         for _, row in ipairs(selectedIconRows) do
             row:Hide()
         end
@@ -2596,24 +2684,20 @@ function refreshMacroLockState()
         editor.macroLockWarning:Hide()
         editor.interfaceLockWarning:Hide()
         if editorMode == "macro" then
-            showFrame(editor.autoMatrixButton, true)
-            showFrame(editor.iconOrText, true)
             showFrame(editor.iconEmptyText, #selectedIcons == 0)
             showFrame(editor.iconSearchTitle, true)
             showFrame(editor.iconPrevButton, false)
             showFrame(editor.iconPageText, false)
             showFrame(editor.iconNextButton, false)
             showFrame(editor.iconSearch, true)
+            showFrame(editor.iconSearchPrevButton, editor.iconSearchPrevButton and editor.iconSearchPrevButton.hasPages)
+            showFrame(editor.iconSearchPageText, editor.iconSearchPageText and editor.iconSearchPageText.hasPages)
+            showFrame(editor.iconSearchNextButton, editor.iconSearchNextButton and editor.iconSearchNextButton.hasPages)
             showFrame(editor.iconSearchPlaceholder, editor.iconSearch and (editor.iconSearch:GetText() or "") == "")
             updateSelectedIcons()
             refreshSuggestions()
         end
     end
-
-    setMacroButtonEnabled(editor.autoMatrixButton, not locked)
-    setMacroButtonEnabled(editor.suggestButton, not locked)
-    setMacroButtonEnabled(editor.clearCellButton, not locked)
-    setMacroButtonEnabled(editor.addIconButton, not locked)
 
     for _, button in ipairs(matrixCellButtons) do
         if isMatrixRowLocked(button.rowKey) then
@@ -2809,6 +2893,12 @@ local function createEditor()
         ADDON.GetSettings().showBonusBarTooltips = value
     end)
     editor.bonusBarShowTooltipsCheckbox:SetPoint("TOPLEFT", editor.bonusBarBindingSizeControl, "BOTTOMLEFT", 0, -4)
+    editor.bonusBarClickButtonsCheckbox = createEditorCheckbox(editor, "Bonusleisten Buttons klickbar", function()
+        return ADDON.GetSettings().clickBonusBarButtons
+    end, function(value)
+        ADDON.GetSettings().clickBonusBarButtons = value
+    end)
+    editor.bonusBarClickButtonsCheckbox:SetPoint("TOPLEFT", editor.bonusBarShowTooltipsCheckbox, "BOTTOMLEFT", 0, -4)
     editor.bonusSettingsCheckboxes = {
         editor.bonusBarShowCheckbox,
         editor.bonusBarAlignCheckbox,
@@ -2816,6 +2906,7 @@ local function createEditor()
         editor.bonusBarGrowthSelector,
         editor.bonusBarShowBindingsCheckbox,
         editor.bonusBarShowTooltipsCheckbox,
+        editor.bonusBarClickButtonsCheckbox,
     }
 
     editor.actionListTitle = createText(editor, SECTION_TITLE_SIZE)
@@ -2834,6 +2925,7 @@ local function createEditor()
     setBackdrop(editor.actionFilter, 0.075, 0.086, 0.108, 1)
     addBorderHover(editor.actionFilter)
     editor.actionFilter:SetScript("OnTextChanged", function()
+        actionListOffset = 1
         refreshActionPicker()
     end)
     editor.actionFilter:SetScript("OnEditFocusGained", function()
@@ -2852,11 +2944,40 @@ local function createEditor()
     editor.actionFilterPlaceholder:SetTextColor(0.45, 0.48, 0.52)
     editor.actionFilterPlaceholder:SetText("Suche nach Interface-Aktionen")
 
-    editor.actionLimitHint = createText(editor, 10)
-    editor.actionLimitHint:SetPoint("LEFT", editor.actionFilter, "RIGHT", 12, 0)
-    editor.actionLimitHint:SetPoint("RIGHT", editor, "RIGHT", -24, 0)
-    editor.actionLimitHint:SetTextColor(0.55, 0.58, 0.64)
-    editor.actionLimitHint:SetText("Mehr Treffer per Suche eingrenzen")
+    editor.actionPrevButton = CreateFrame("Button", nil, editor, "UIPanelButtonTemplate")
+    editor.actionPrevButton:SetWidth(28)
+    editor.actionPrevButton:SetHeight(22)
+    editor.actionPrevButton:SetPoint("LEFT", editor.actionFilter, "RIGHT", 8, 0)
+    editor.actionPrevButton:SetText("<")
+    styleButton(editor.actionPrevButton)
+    editor.actionPrevButton:SetScript("OnClick", function()
+        actionListOffset = math.max(1, actionListOffset - #actionButtons)
+        refreshActionPicker()
+    end)
+
+    editor.actionPageText = createText(editor, 10, "CENTER")
+    editor.actionPageText:SetPoint("LEFT", editor.actionPrevButton, "RIGHT", 4, 0)
+    editor.actionPageText:SetWidth(48)
+    editor.actionPageText:SetTextColor(0.75, 0.78, 0.84)
+
+    editor.actionNextButton = CreateFrame("Button", nil, editor, "UIPanelButtonTemplate")
+    editor.actionNextButton:SetWidth(28)
+    editor.actionNextButton:SetHeight(22)
+    editor.actionNextButton:SetPoint("RIGHT", editor, "RIGHT", -22, 0)
+    editor.actionNextButton:SetPoint("TOP", editor.actionFilter, "TOP", 0, 1)
+    editor.actionNextButton:SetText(">")
+    styleButton(editor.actionNextButton)
+    editor.actionNextButton:SetScript("OnClick", function()
+        actionListOffset = actionListOffset + #actionButtons
+        refreshActionPicker()
+    end)
+    editor.actionPageText:ClearAllPoints()
+    editor.actionPageText:SetPoint("RIGHT", editor.actionNextButton, "LEFT", -4, 0)
+    editor.actionPrevButton:ClearAllPoints()
+    editor.actionPrevButton:SetPoint("RIGHT", editor.actionPageText, "LEFT", -4, 0)
+    editor.actionPrevButton:Hide()
+    editor.actionPageText:Hide()
+    editor.actionNextButton:Hide()
 
     for i = 1, 6 do
         createInlineActionButton(editor, i)
@@ -2939,48 +3060,9 @@ local function createEditor()
     editor.iconEmptyText:SetTextColor(0.6, 0.64, 0.72)
     editor.iconEmptyText:Hide()
 
-    local addMacroIcons = CreateFrame("Button", nil, editor, "UIPanelButtonTemplate")
-    addMacroIcons:SetWidth(158)
-    addMacroIcons:SetHeight(22)
-    addMacroIcons:SetText("Aus Makro hinzufügen")
-    addMacroIcons:SetScript("OnClick", function()
-        local suggestions = ADDON.GetMacroIconSuggestions and ADDON.GetMacroIconSuggestions(editor.macroEditBox:GetText() or "") or {}
-        for _, suggestion in ipairs(suggestions) do
-            if suggestion.texture and suggestion.texture ~= "" then
-                table.insert(selectedIcons, {
-                    texture = suggestion.texture,
-                    name = suggestion.name or suggestion.texture,
-                    text = "",
-                    useName = false,
-                })
-            end
-        end
-        if #selectedIcons > #selectedIconRows then
-            iconListOffset = math.max(1, #selectedIcons - #selectedIconRows + 1)
-        end
-        updateSelectedIcons()
-        saveMacroDraft()
-    end)
-    styleButton(addMacroIcons)
-    editor.autoMatrixButton = addMacroIcons
-
-    for i = 1, 5 do
+    for i = 1, 4 do
         selectedIconRows[i] = createSelectedIconRow(editor, i)
     end
-
-    editor.selectedIconScrollBar = CreateFrame("Slider", "DudesFlexBindingsSelectedIconScrollBar", editor, "UIPanelScrollBarTemplate")
-    editor.selectedIconScrollBar:SetWidth(16)
-    editor.selectedIconScrollBar:SetScript("OnValueChanged", function(self, value)
-        if suppressIconScroll then
-            return
-        end
-        local newOffset = math.floor((value or 1) + 0.5)
-        if newOffset ~= iconListOffset then
-            iconListOffset = newOffset
-            updateSelectedIcons()
-        end
-    end)
-    editor.selectedIconScrollBar:Hide()
 
     editor.iconPrevButton = CreateFrame("Button", nil, editor, "UIPanelButtonTemplate")
     editor.iconPrevButton:SetWidth(28)
@@ -3021,7 +3103,10 @@ local function createEditor()
     addShadow(editor.iconSearch)
     setBackdrop(editor.iconSearch, 0.075, 0.086, 0.108, 1)
     addBorderHover(editor.iconSearch)
-    editor.iconSearch:SetScript("OnTextChanged", refreshSuggestions)
+    editor.iconSearch:SetScript("OnTextChanged", function()
+        iconSuggestionOffset = 1
+        refreshSuggestions()
+    end)
     editor.iconSearch:SetScript("OnEscapePressed", function(self)
         self:ClearFocus()
     end)
@@ -3047,18 +3132,36 @@ local function createEditor()
         end
     end)
 
-    editor.iconOrText = createText(editor, 11, "CENTER")
-    editor.iconOrText:SetWidth(34)
-    editor.iconOrText:SetHeight(20)
-    editor.iconOrText:SetTextColor(0.75, 0.78, 0.84)
-    editor.iconOrText:SetText("oder")
+    editor.iconSearchPrevButton = CreateFrame("Button", nil, editor, "UIPanelButtonTemplate")
+    editor.iconSearchPrevButton:SetWidth(28)
+    editor.iconSearchPrevButton:SetHeight(22)
+    editor.iconSearchPrevButton:SetText("<")
+    styleButton(editor.iconSearchPrevButton)
+    editor.iconSearchPrevButton:SetScript("OnClick", function()
+        iconSuggestionOffset = math.max(1, iconSuggestionOffset - #suggestionButtons)
+        refreshSuggestions()
+    end)
+
+    editor.iconSearchPageText = createText(editor, 10, "CENTER")
+    editor.iconSearchPageText:SetWidth(48)
+    editor.iconSearchPageText:SetTextColor(0.75, 0.78, 0.84)
+
+    editor.iconSearchNextButton = CreateFrame("Button", nil, editor, "UIPanelButtonTemplate")
+    editor.iconSearchNextButton:SetWidth(28)
+    editor.iconSearchNextButton:SetHeight(22)
+    editor.iconSearchNextButton:SetText(">")
+    styleButton(editor.iconSearchNextButton)
+    editor.iconSearchNextButton:SetScript("OnClick", function()
+        iconSuggestionOffset = iconSuggestionOffset + #suggestionButtons
+        refreshSuggestions()
+    end)
+    editor.iconSearchPrevButton:Hide()
+    editor.iconSearchPageText:Hide()
+    editor.iconSearchNextButton:Hide()
 
     editor.manualIcon = editor.iconSearch
-    editor.addIconButton = addMacroIcons
-    editor.suggestButton = addMacroIcons
-    editor.clearCellButton = addMacroIcons
 
-    for i = 1, 9 do
+    for i = 1, ICON_SUGGESTION_COLUMNS * ICON_SUGGESTION_ROWS do
         suggestionButtons[i] = createSuggestionButton(editor, i)
         suggestionButtons[i]:Hide()
     end
@@ -3069,6 +3172,9 @@ end
 
 function ADDON.OpenEditor(key)
     createEditor()
+    if currentKey and macroDirty then
+        saveMacroDraft()
+    end
     currentKey = key
 
     local binding = ADDON.GetBinding(key)
@@ -3079,6 +3185,8 @@ function ADDON.OpenEditor(key)
     macroDirty = nil
     selectedIcons = normalizeSelectedIcons(binding and binding.icons or {})
     iconListOffset = 1
+    iconSuggestionOffset = 1
+    actionListOffset = 1
     iconMatrix = nil
     selectedMatrixCellKey = nil
     if #selectedIcons == 0 and binding and binding.iconMatrix then

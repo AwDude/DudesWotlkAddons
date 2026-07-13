@@ -1,6 +1,3 @@
 - save errors instead of show? needed or saved automatically?
 - loot and roll tracker
     - maybe with AK 10 / 25 auto mode?
-
-DudesKeyMakros
-- bonusleisten tasten klickbar machen als option in den einstellungen (checkbox)

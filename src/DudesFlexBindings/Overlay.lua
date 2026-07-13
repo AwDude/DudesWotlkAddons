@@ -397,7 +397,15 @@ local function setIconText(iconFrame, text, iconSize)
         return bestText
     end
 
+    local shouldPreferWrappedText = canWrap and measureText(text, fontSize) > maxTextWidth
+
     local function fitText(value, size)
+        if shouldPreferWrappedText then
+            local wrapped = splitTextForWidth(value, size)
+            if wrapped then
+                return wrapped
+            end
+        end
         if measureText(value, size) <= maxTextWidth then
             return value
         end
@@ -429,7 +437,7 @@ local function setIconText(iconFrame, text, iconSize)
     iconFrame.label:SetWidth(maxTextWidth)
     iconFrame.label:SetHeight(maxTextHeight)
     if iconFrame.label.SetWordWrap then
-        iconFrame.label:SetWordWrap(false)
+        iconFrame.label:SetWordWrap(string.find(fittedText, "\n", 1, true) and true or false)
     end
     if iconFrame.label.SetNonSpaceWrap then
         iconFrame.label:SetNonSpaceWrap(false)

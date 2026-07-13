@@ -13,6 +13,7 @@ local MODIFIER_LABELS = {
     ctrl = "C",
     alt = "A",
 }
+local macroIconTextureCache
 
 local function trim(text)
     text = text or ""
@@ -185,6 +186,57 @@ local function addSuggestion(suggestions, seen, name, texture, kind)
         })
     end
     return texture
+end
+
+local function getTextureFileName(texture)
+    local text = tostring(texture or "")
+    local name = string.match(text, "[\\/]([^\\/]+)$") or text
+    name = string.gsub(name, "%.[%a%d]+$", "")
+    return name
+end
+
+local function getMacroIconTextures()
+    if macroIconTextureCache then
+        return macroIconTextureCache
+    end
+
+    local textures = {}
+    local seen = {}
+
+    local function add(texture)
+        if texture and texture ~= "" and not seen[texture] then
+            seen[texture] = true
+            table.insert(textures, texture)
+        end
+    end
+
+    if GetMacroIcons then
+        local iconTable = {}
+        local ok, result = pcall(GetMacroIcons, iconTable)
+        if ok then
+            if type(result) == "table" then
+                for _, texture in ipairs(result) do
+                    add(texture)
+                end
+            end
+            for _, texture in ipairs(iconTable) do
+                add(texture)
+            end
+        end
+    end
+
+    if #textures == 0 and GetMacroIconInfo then
+        for i = 1, 5000 do
+            local texture = GetMacroIconInfo(i)
+            if not texture then
+                break
+            end
+            add(texture)
+        end
+    end
+
+    macroIconTextureCache = textures
+    return macroIconTextureCache
 end
 
 local function resolveSpellIcon(name)
@@ -426,6 +478,10 @@ function ADDON.SearchIcons(query, macrotext)
 
     for _, suggestion in ipairs(ADDON.GetMacroIconSuggestions(macrotext) or {}) do
         add(suggestion.name, suggestion.texture, suggestion.kind)
+    end
+
+    for _, texture in ipairs(getMacroIconTextures()) do
+        add(getTextureFileName(texture), texture, "macroIcon")
     end
 
     if GetNumSpellTabs and GetSpellTabInfo and GetSpellName then

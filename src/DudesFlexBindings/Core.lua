@@ -104,6 +104,21 @@ local BLIZZARD_DEFAULT_BINDINGS = {
     BUTTON4 = { normal = "TOGGLEAUTORUN" },
 }
 
+local BLIZZARD_DEFAULT_BONUS_BAR_BINDINGS = {
+    ["1"] = { normal = 1 },
+    ["2"] = { normal = 2 },
+    ["3"] = { normal = 3 },
+    ["4"] = { normal = 4 },
+    ["5"] = { normal = 5 },
+    ["6"] = { normal = 6 },
+    ["7"] = { normal = 7 },
+    ["8"] = { normal = 8 },
+    ["9"] = { normal = 9 },
+    ["0"] = { normal = 10 },
+    ["ß"] = { normal = 11 },
+    ["´"] = { normal = 12 },
+}
+
 local function printMessage(text)
     DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffDudesFlexBindings:|r " .. text)
 end
@@ -135,7 +150,9 @@ local function ensureSpec(character, specIndex)
     character.specs[specIndex] = character.specs[specIndex] or { bindings = {} }
     character.specs[specIndex].bindings = character.specs[specIndex].bindings or {}
     character.specs[specIndex].defaultBindings = character.specs[specIndex].defaultBindings or {}
-    character.specs[specIndex].bonusBarBindings = character.specs[specIndex].bonusBarBindings or {}
+    if character.specs[specIndex].bonusBarBindings == nil then
+        character.specs[specIndex].bonusBarBindings = DudesUtils.Table.Copy(BLIZZARD_DEFAULT_BONUS_BAR_BINDINGS)
+    end
     return character.specs[specIndex]
 end
 
@@ -195,7 +212,7 @@ local function buildBlizzardDefaultLayout()
     return {
         bindings = {},
         defaultBindings = copyTable(BLIZZARD_DEFAULT_BINDINGS),
-        bonusBarBindings = {},
+        bonusBarBindings = copyTable(BLIZZARD_DEFAULT_BONUS_BAR_BINDINGS),
     }
 end
 
@@ -268,6 +285,9 @@ function ADDON.InitDB()
     end
     if character.settings.showBonusBarTooltips == nil then
         character.settings.showBonusBarTooltips = true
+    end
+    if character.settings.clickBonusBarButtons == nil then
+        character.settings.clickBonusBarButtons = false
     end
     if character.settings.bonusBarBindingFontSize == nil then
         character.settings.bonusBarBindingFontSize = 10
@@ -506,7 +526,7 @@ function ADDON.SetBonusBarBindingAction(bindingKey, slot)
     if not key then
         return false
     end
-    if ADDON.GetDefaultBindingAction(bindingKey) ~= "" then
+    if slot and ADDON.GetDefaultBindingAction(bindingKey) ~= "" then
         return false
     end
 
@@ -888,19 +908,31 @@ local function ensureRuntimeButton(key)
     return button
 end
 
-local function buildBonusBarMacro(slot, macrotext)
-    slot = normalizeBonusSlot(slot)
+local function buildRuntimeMacro(bonusBindings, macrotext)
     macrotext = macrotext or ""
-    if not slot then
+    bonusBindings = bonusBindings or {}
+    if not next(bonusBindings) then
         return macrotext
     end
 
-    local clickTarget = ADDON.GetBonusBarButtonName and ADDON.GetBonusBarButtonName(slot) or ("BonusActionButton" .. tostring(slot))
-    local lines = {
-        "/click [vehicleui][bonusbar:5] " .. clickTarget,
-        "/stopmacro [vehicleui]",
-        "/stopmacro [bonusbar:5]",
+    local lines = {}
+    local modifierConditions = {
+        normal = "nomod",
+        shift = "mod:shift",
+        ctrl = "mod:ctrl",
+        alt = "mod:alt",
     }
+    local modifierOrder = { "ctrl", "shift", "alt", "normal" }
+    for _, modifier in ipairs(modifierOrder) do
+        local slot = normalizeBonusSlot(bonusBindings[modifier])
+        if slot then
+            local clickTarget = ADDON.GetBonusBarButtonName and ADDON.GetBonusBarButtonName(slot) or ("BonusActionButton" .. tostring(slot))
+            local condition = modifierConditions[modifier] or "nomod"
+            table.insert(lines, "/click [" .. condition .. ",vehicleui][" .. condition .. ",bonusbar:5] " .. clickTarget)
+            table.insert(lines, "/stopmacro [" .. condition .. ",vehicleui][" .. condition .. ",bonusbar:5]")
+        end
+    end
+
     if macrotext ~= "" then
         table.insert(lines, macrotext)
     end
@@ -910,25 +942,17 @@ end
 local function setRuntimeVariantAttributes(button, binding, bonusBindings)
     local macrotext = binding and binding.macrotext or ""
     button.dkmBonusBarBindings = bonusBindings or {}
-    local variants = {
-        normal = "",
-        shift = "shift-",
-        ctrl = "ctrl-",
-        alt = "alt-",
-    }
+    local runtimeMacro = buildRuntimeMacro(bonusBindings, macrotext)
 
     button:SetAttribute("type", "macro")
     button:SetAttribute("type1", "macro")
-
-    for modifier, prefix in pairs(variants) do
-        local variantMacro = buildBonusBarMacro(bonusBindings and bonusBindings[modifier], macrotext)
-        if prefix == "" then
-            button:SetAttribute("macrotext", variantMacro)
-            button:SetAttribute("macrotext1", variantMacro)
-        else
-            button:SetAttribute(prefix .. "type1", "macro")
-            button:SetAttribute(prefix .. "macrotext1", variantMacro)
-        end
+    button:SetAttribute("macrotext", runtimeMacro)
+    button:SetAttribute("macrotext1", runtimeMacro)
+    for _, prefix in ipairs({ "shift-", "ctrl-", "alt-" }) do
+        button:SetAttribute(prefix .. "type", nil)
+        button:SetAttribute(prefix .. "type1", nil)
+        button:SetAttribute(prefix .. "macrotext", nil)
+        button:SetAttribute(prefix .. "macrotext1", nil)
     end
 end
 
@@ -978,13 +1002,9 @@ function ADDON.ApplyRuntime()
                 local buttonName = button:GetName()
                 local keyDefaults = spec.defaultBindings[key] or {}
 
-                for _, variant in ipairs(ADDON.GetDefaultBindingKeysForKey(key)) do
-                    local modifier = variant.modifier or "normal"
-                    local hasVariantBonus = normalizeBonusSlot(bonusBindings[modifier]) and true or false
-                    if (hasMacro or hasVariantBonus) and (not keyDefaults[modifier] or keyDefaults[modifier] == "") then
-                        local bindOk = pcall(SetOverrideBindingClick, ownerFrame, true, variant.key, buttonName, "LeftButton")
-                        ok = ok and bindOk
-                    end
+                if not keyDefaults.normal or keyDefaults.normal == "" then
+                    local bindOk = pcall(SetOverrideBindingClick, ownerFrame, true, key, buttonName, "LeftButton")
+                    ok = ok and bindOk
                 end
             end
             if not ok then
