@@ -1,0 +1,5 @@
+<Bindings>
+    <Binding name="DUDESLOOTTRACKER_TOGGLE" header="DUDESADDONS">
+        DudesLootTracker.ToggleMainWindow()
+    </Binding>
+</Bindings>

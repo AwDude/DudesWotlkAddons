@@ -1,43 +1,40 @@
 local NO_DRAG_TARGETS = {}
 local flexFrameNames = {
-	GroupLootFrame1 		= NO_DRAG_TARGETS,
-	GroupLootFrame2 		= NO_DRAG_TARGETS,
-	GroupLootFrame3 		= NO_DRAG_TARGETS,
-	GroupLootFrame4 		= NO_DRAG_TARGETS,
-	SpellBookFrame 			= NO_DRAG_TARGETS,
-	CharacterFrame 			= {"PaperDollFrame", "PetPaperDollFrameCompanionFrame", "ReputationFrame", "SkillFrame", "TokenFrame"},
-	PlayerTalentFrame 		= NO_DRAG_TARGETS,
-	AchievementFrame 		= {"AchievementFrameHeader"},
-	CalendarFrame 			= NO_DRAG_TARGETS,
-	QuestLogFrame 			= NO_DRAG_TARGETS,
-	QuestFrame 				= NO_DRAG_TARGETS,
-	FriendsFrame 			= NO_DRAG_TARGETS,
-	PVPParentFrame 			= {"PVPBattlegroundFrame", "PVPFrame"},
-	InspectFrame 			= {"InspectPVPFrame", "InspectTalentFrame", "InspectNameFrame"},
-	AuctionFrame 			= NO_DRAG_TARGETS,
-	TradeSkillFrame 		= NO_DRAG_TARGETS,
-	MacroFrame 				= NO_DRAG_TARGETS,
-	GossipFrame 			= NO_DRAG_TARGETS,
-	TaxiFrame 				= NO_DRAG_TARGETS,
-	MerchantFrame 			= NO_DRAG_TARGETS,
-	ClassTrainerFrame 		= NO_DRAG_TARGETS,
-	DressUpFrame 			= NO_DRAG_TARGETS,
-	ContainerFrame1 		= NO_DRAG_TARGETS,
-	ContainerFrame2 		= NO_DRAG_TARGETS,
-	ContainerFrame3 		= NO_DRAG_TARGETS,
-	ContainerFrame4 		= NO_DRAG_TARGETS,
-	ContainerFrame5 		= NO_DRAG_TARGETS,
-	Atr_Adv_Search_Dialog 	= NO_DRAG_TARGETS,
-	Atr_Buy_Confirm_Frame 	= NO_DRAG_TARGETS,
-	Atr_FullScanFrame 		= NO_DRAG_TARGETS,
-	MailFrame 				= {"SendMailFrame"},
-	BankFrame 				= NO_DRAG_TARGETS,
-	TradeFrame 				= NO_DRAG_TARGETS,
-	GuildBankFrame 			= NO_DRAG_TARGETS,
-	ItemSocketingFrame 		= NO_DRAG_TARGETS,
-	HelpFrame 				= NO_DRAG_TARGETS,
-	StaticPopup1 			= NO_DRAG_TARGETS,
-	LFDParentFrame 			= NO_DRAG_TARGETS
+    DudesFlexFrames_GroupLootParent = {"GroupLootFrame1", "GroupLootFrame2", "GroupLootFrame3", "GroupLootFrame4"},
+	SpellBookFrame 			        = NO_DRAG_TARGETS,
+	CharacterFrame 			        = {"PaperDollFrame", "PetPaperDollFrameCompanionFrame", "ReputationFrame", "SkillFrame", "TokenFrame"},
+	PlayerTalentFrame 		        = NO_DRAG_TARGETS,
+	AchievementFrame 		        = {"AchievementFrameHeader"},
+	CalendarFrame 			        = NO_DRAG_TARGETS,
+	QuestLogFrame 			        = NO_DRAG_TARGETS,
+	QuestFrame 				        = NO_DRAG_TARGETS,
+	FriendsFrame 			        = NO_DRAG_TARGETS,
+	PVPParentFrame 			        = {"PVPBattlegroundFrame", "PVPFrame"},
+	InspectFrame 			        = {"InspectPVPFrame", "InspectTalentFrame", "InspectNameFrame"},
+	AuctionFrame 			        = NO_DRAG_TARGETS,
+	TradeSkillFrame 		        = NO_DRAG_TARGETS,
+	MacroFrame 				        = NO_DRAG_TARGETS,
+	GossipFrame 			        = NO_DRAG_TARGETS,
+	TaxiFrame 				        = NO_DRAG_TARGETS,
+	MerchantFrame 			        = NO_DRAG_TARGETS,
+	ClassTrainerFrame 		        = NO_DRAG_TARGETS,
+	DressUpFrame 			        = NO_DRAG_TARGETS,
+	ContainerFrame1 		        = NO_DRAG_TARGETS,
+	ContainerFrame2 		        = NO_DRAG_TARGETS,
+	ContainerFrame3 		        = NO_DRAG_TARGETS,
+	ContainerFrame4 		        = NO_DRAG_TARGETS,
+	ContainerFrame5 		        = NO_DRAG_TARGETS,
+	Atr_Adv_Search_Dialog 	        = NO_DRAG_TARGETS,
+	Atr_Buy_Confirm_Frame 	        = NO_DRAG_TARGETS,
+	Atr_FullScanFrame 		        = NO_DRAG_TARGETS,
+	MailFrame 				        = {"SendMailFrame"},
+	BankFrame 				        = NO_DRAG_TARGETS,
+	TradeFrame 				        = NO_DRAG_TARGETS,
+	GuildBankFrame 			        = NO_DRAG_TARGETS,
+	ItemSocketingFrame 		        = NO_DRAG_TARGETS,
+	HelpFrame 				        = NO_DRAG_TARGETS,
+	StaticPopup1 			        = NO_DRAG_TARGETS,
+	LFDParentFrame 			        = NO_DRAG_TARGETS
 }
 local scaleFrameNames = {
 	"InspectModelFrame",
@@ -64,7 +61,7 @@ local function disableBlizzardAutoClose(frameName)
 end
 
 local function disableBlizzardPanelManagement(frameName)
-	if frameName then 
+	if frameName and frameName ~= "DudesFlexFrames_GroupLootParent" then
 		if UIPanelWindows and UIPanelWindows[frameName] then
 			UIPanelWindows[frameName] = nil
 		end
@@ -163,8 +160,32 @@ local function initFrame(frameName, initFunc)
 	end
 end
 
+local function initGroupLootParent()
+    if not DudesFlexFrames_GroupLootParent and GroupLootFrame1 then
+        local left = GroupLootFrame1:GetLeft()
+        local bottom = GroupLootFrame1:GetBottom()
+        local width = GroupLootFrame1:GetWidth()
+        local height = GroupLootFrame4:GetTop() - bottom
+        local strata = GroupLootFrame1:GetFrameStrata()
+        parent = CreateFrame("Frame", "DudesFlexFrames_GroupLootParent", UIParent)
+        parent:ClearAllPoints()
+        parent:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left, bottom)
+        parent:SetWidth(width)
+        parent:SetHeight(height)
+        parent:SetFrameStrata(strata)
+        for _, frameName in ipairs(flexFrameNames["DudesFlexFrames_GroupLootParent"]) do
+            local frame = _G[frameName]
+            frame:ClearAllPoints()
+            frame:SetParent(parent)
+            frame:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 0, frame:GetBottom() - bottom)
+        end
+        parent:Show()
+    end
+end
+
 local function init()
-	if not InCombatLockdown() then	
+	if not InCombatLockdown() then
+		initGroupLootParent()
 		for flexFrameName, dragNames in pairs(flexFrameNames) do
 			initFrame(flexFrameName, function(frame)
 				initFlex(frame, dragNames)

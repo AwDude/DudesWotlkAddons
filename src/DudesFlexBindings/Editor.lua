@@ -132,6 +132,16 @@ local function createText(parent, size, justify)
     return text
 end
 
+local function setFittingActionText(text, value, maxWidth)
+    local size = 11
+    text:SetFont(STANDARD_TEXT_FONT, size)
+    text:SetText(value or "")
+    while size > 9 and text.GetStringWidth and text:GetStringWidth() > maxWidth do
+        size = size - 1
+        text:SetFont(STANDARD_TEXT_FONT, size)
+    end
+end
+
 local function setHeadingText(text)
     if text then
         text:SetTextColor(1, 1, 1)
@@ -1787,7 +1797,7 @@ function refreshActionPicker()
         local action = actions[actionListOffset + i - 1]
         if action then
             button.command = action.command
-            button.text:SetText(action.name)
+            setFittingActionText(button.text, action.name, button.textMaxWidth or 260)
             button.commandText:SetText(action.command)
             for bindIndex, bindButton in ipairs(button.bindButtons or {}) do
                 local variant = variants[bindIndex]
@@ -1911,6 +1921,7 @@ local function createActionPicker()
         button.text:SetPoint("TOPLEFT", button, "TOPLEFT", 8, -5)
         button.text:SetPoint("RIGHT", button, "RIGHT", -8, 0)
         button.text:SetTextColor(1, 0.82, 0.1)
+        button.textMaxWidth = 220
         button.commandText = createText(button, 8)
         button.commandText:SetPoint("TOPLEFT", button.text, "BOTTOMLEFT", 0, -2)
         button.commandText:SetPoint("RIGHT", button, "RIGHT", -8, 0)
@@ -2290,6 +2301,7 @@ local function createInlineActionButton(parent, index)
     button.text:SetPoint("TOPLEFT", button, "TOPLEFT", 8, -5)
     button.text:SetWidth(260)
     button.text:SetTextColor(1, 0.82, 0.1)
+    button.textMaxWidth = 260
 
     button.commandText = createText(button, 8)
     button.commandText:SetPoint("TOPLEFT", button.text, "BOTTOMLEFT", 0, -2)

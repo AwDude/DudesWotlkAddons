@@ -6,6 +6,7 @@
 ## SavedVariables: DudesFlexBindingsDB
 ## Dependencies: DudesUtils
 
+Bindings.xml
 Core.lua
 Icons.lua
 BonusBar.lua

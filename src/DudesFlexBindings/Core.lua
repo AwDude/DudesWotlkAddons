@@ -3,10 +3,14 @@
 local ADDON = DudesFlexBindings
 local BUTTON_PREFIX = "DFB_"
 local MODIFIERS = { "SHIFT", "CTRL", "ALT" }
-local TOGGLE_BINDING_ACTION = "CLICK DudesFlexBindingsToggleButton:LeftButton"
+local TOGGLE_BINDING_ACTION = "DUDESFLEXBINDINGS_TOGGLE"
 local ACCOUNT_BINDING_SET = 1
 local CHARACTER_BINDING_SET = 2
 local BONUS_BAR_SLOT_COUNT = 12
+local EXPORT_PREFIX = "DudesFlexBindings:1:"
+
+BINDING_HEADER_DUDESADDONS = "Dude's Addons"
+BINDING_NAME_DUDESFLEXBINDINGS_TOGGLE = "Dude's Flex Bindings: Fenster ein-/ausblenden"
 
 ADDON.keys = {
     "ESCAPE",
@@ -31,7 +35,6 @@ ADDON.mouseKeys = {
 }
 
 local ownerFrame
-local toggleButton
 local runtimeButtons = {}
 local pendingRuntimeUpdate
 local pendingDefaultBindingUpdate
@@ -267,6 +270,9 @@ function ADDON.InitDB()
     character.settings.minimapAngle = character.settings.minimapAngle or 225
     if character.settings.bindModifiers == nil then
         character.settings.bindModifiers = true
+    end
+    if character.settings.triggerOnKeyDown == nil then
+        character.settings.triggerOnKeyDown = false
     end
     if character.settings.showBonusBar == nil then
         character.settings.showBonusBar = true
@@ -650,8 +656,8 @@ function ADDON.GetBindingDisplayName(action)
         return ""
     end
 
-    if string.find(action, "CLICK DudesFlexBindingsToggleButton", 1, true) then
-        return "DudesFlexBindings: Toggle layout editor"
+    if action == TOGGLE_BINDING_ACTION then
+        return BINDING_NAME_DUDESFLEXBINDINGS_TOGGLE
     end
 
     local text = GetBindingText(action, "BINDING_NAME_")
@@ -784,7 +790,7 @@ function ADDON.GetAvailableBindingActions(filter)
 
     for i = 1, GetNumBindings() do
         local command = GetBinding(i)
-        if command and command ~= "" and not seen[command] then
+        if command and command ~= "" and not seen[command] and not string.find(command, "^HEADER_") then
             local name = ADDON.GetBindingDisplayName(command)
             local haystack = string.lower((name or "") .. " " .. command)
             if filter == "" or string.find(haystack, filter, 1, true) then
@@ -839,15 +845,18 @@ local function ensureOwnerFrame()
     ownerFrame = CreateFrame("Frame", "DudesFlexBindingsOwnerFrame", UIParent)
     ownerFrame:Hide()
 
-    toggleButton = CreateFrame("Button", "DudesFlexBindingsToggleButton", UIParent)
-    toggleButton:SetScript("OnClick", function()
-        if ADDON.ToggleOverlay then
-            ADDON.ToggleOverlay()
-        end
-    end)
-    toggleButton:Hide()
-
     return ownerFrame
+end
+
+local function updateRuntimeButtonClickRegistration(button)
+    if not button or not button.RegisterForClicks then
+        return
+    end
+    if ADDON.GetSettings().triggerOnKeyDown then
+        button:RegisterForClicks("LeftButtonDown")
+    else
+        button:RegisterForClicks("LeftButtonUp")
+    end
 end
 
 local function installMacroErrorHandler()
@@ -881,6 +890,7 @@ local function ensureRuntimeButton(key)
 
     local button = CreateFrame("Button", buttonName, UIParent, "SecureActionButtonTemplate")
     button.dkmKey = key
+    updateRuntimeButtonClickRegistration(button)
     button:SetAttribute("type", "macro")
     button:SetAttribute("type1", "macro")
     button:SetScript("PreClick", function(self)
@@ -906,6 +916,20 @@ local function ensureRuntimeButton(key)
     button:Hide()
     runtimeButtons[key] = button
     return button
+end
+
+function ADDON.UpdateRuntimeButtonClickRegistration()
+    if InCombatLockdown and InCombatLockdown() then
+        ADDON.QueueRuntimeUpdate()
+        printMessage("Runtime-Aktualisierung wird bis nach dem Kampf verschoben.")
+        return false
+    end
+
+    for _, button in pairs(runtimeButtons) do
+        updateRuntimeButtonClickRegistration(button)
+    end
+    ADDON.ApplyRuntime()
+    return true
 end
 
 local function buildRuntimeMacro(bonusBindings, macrotext)
@@ -1046,9 +1070,7 @@ local function setPermanentBinding(bindingKey, action)
         return false
     end
 
-    if action == TOGGLE_BINDING_ACTION and SetBindingClick then
-        SetBindingClick(bindingKey, "DudesFlexBindingsToggleButton")
-    elseif action and action ~= "" then
+    if action and action ~= "" then
         SetBinding(bindingKey, action)
     else
         SetBinding(bindingKey)
@@ -1158,6 +1180,159 @@ local function makeProfile(name, layout, systemId, protected)
     }
 end
 
+local function trimProfileName(name)
+    name = string.gsub(name or "", "^%s+", "")
+    name = string.gsub(name, "%s+$", "")
+    return name
+end
+
+local function isReservedProfileName(name)
+    return name == "" or name == "system_empty" or name == "system_blizzard_defaults"
+end
+
+local function isLayoutProfileNameAvailable(name, excludedProfileId)
+    name = trimProfileName(name)
+    if isReservedProfileName(name) then
+        return false
+    end
+
+    local lowerName = string.lower(name)
+    for _, profile in ipairs(ADDON.GetLayoutProfiles()) do
+        if profile.id ~= excludedProfileId and string.lower(profile.name or "") == lowerName then
+            return false
+        end
+    end
+    return true
+end
+
+local function serializeValue(value)
+    local valueType = type(value)
+    if valueType == "string" then
+        return string.format("%q", value)
+    elseif valueType == "number" or valueType == "boolean" then
+        return tostring(value)
+    elseif valueType ~= "table" then
+        return "nil"
+    end
+
+    local keys = {}
+    for key in pairs(value) do
+        if type(key) == "string" or type(key) == "number" then
+            table.insert(keys, key)
+        end
+    end
+    table.sort(keys, function(a, b)
+        if type(a) == type(b) then
+            return a < b
+        end
+        return type(a) < type(b)
+    end)
+
+    local parts = { "{" }
+    for _, key in ipairs(keys) do
+        table.insert(parts, "[" .. serializeValue(key) .. "]=" .. serializeValue(value[key]) .. ",")
+    end
+    table.insert(parts, "}")
+    return table.concat(parts)
+end
+
+local function deserializeValue(text)
+    text = text or ""
+    if string.sub(text, 1, string.len(EXPORT_PREFIX)) == EXPORT_PREFIX then
+        text = string.sub(text, string.len(EXPORT_PREFIX) + 1)
+    end
+    if text == "" then
+        return nil
+    end
+
+    local chunk = loadstring and loadstring("return " .. text)
+    if not chunk then
+        return nil
+    end
+    if setfenv then
+        setfenv(chunk, {})
+    end
+    local ok, value = pcall(chunk)
+    if ok and type(value) == "table" then
+        return value
+    end
+    return nil
+end
+
+local function sanitizeIconList(icons)
+    local sanitized = {}
+    for _, icon in ipairs(icons or {}) do
+        if type(icon) == "table" and type(icon.texture) == "string" and icon.texture ~= "" then
+            table.insert(sanitized, {
+                texture = icon.texture,
+                text = type(icon.text) == "string" and icon.text or "",
+                name = type(icon.name) == "string" and icon.name or icon.texture,
+                useName = icon.useName and true or false,
+            })
+        end
+    end
+    return sanitized
+end
+
+local function sanitizeBindings(bindings)
+    local sanitized = {}
+    for key, binding in pairs(bindings or {}) do
+        if type(key) == "string" and type(binding) == "table" then
+            local macrotext = type(binding.macrotext) == "string" and binding.macrotext or ""
+            local icons = sanitizeIconList(binding.icons)
+            if macrotext ~= "" or #icons > 0 then
+                sanitized[key] = {
+                    macrotext = macrotext,
+                    icons = icons,
+                }
+            end
+        end
+    end
+    return sanitized
+end
+
+local function sanitizeDefaultBindings(defaultBindings)
+    local sanitized = {}
+    for key, variants in pairs(defaultBindings or {}) do
+        if type(key) == "string" and type(variants) == "table" then
+            for modifier, action in pairs(variants) do
+                if type(modifier) == "string" and type(action) == "string" and action ~= "" then
+                    sanitized[key] = sanitized[key] or {}
+                    sanitized[key][modifier] = action
+                end
+            end
+        end
+    end
+    return sanitized
+end
+
+local function sanitizeBonusBarBindings(bonusBarBindings)
+    local sanitized = {}
+    for key, variants in pairs(bonusBarBindings or {}) do
+        if type(key) == "string" and type(variants) == "table" then
+            for modifier, slot in pairs(variants) do
+                slot = normalizeBonusSlot(slot)
+                if type(modifier) == "string" and slot then
+                    sanitized[key] = sanitized[key] or {}
+                    sanitized[key][modifier] = slot
+                end
+            end
+        end
+    end
+    return sanitized
+end
+
+local function sanitizeImportedLayout(layout)
+    if type(layout) ~= "table" then
+        return nil
+    end
+    return {
+        bindings = sanitizeBindings(layout.bindings),
+        defaultBindings = sanitizeDefaultBindings(layout.defaultBindings),
+        bonusBarBindings = sanitizeBonusBarBindings(layout.bonusBarBindings),
+    }
+end
+
 function ADDON.GetLayoutProfiles()
     ADDON.InitDB()
     local profiles = {
@@ -1239,24 +1414,63 @@ end
 
 function ADDON.SaveAppliedLayoutProfile(name)
     ADDON.InitDB()
-    name = string.gsub(name or "", "^%s+", "")
-    name = string.gsub(name, "%s+$", "")
-    if name == "" then
+    name = trimProfileName(name)
+    if not isLayoutProfileNameAvailable(name) then
         return false
-    end
-    if name == "system_empty" or name == "system_blizzard_defaults" then
-        return false
-    end
-    local lowerName = string.lower(name)
-    for _, profile in ipairs(ADDON.GetLayoutProfiles()) do
-        if string.lower(profile.name or "") == lowerName then
-            return false
-        end
     end
 
     local layout = getCurrentAppliedLayout()
     DudesFlexBindingsDB.savedLayouts[name] = makeProfile(name, layout, name, false)
     printMessage("Saved layout '" .. name .. "'.")
+    return true
+end
+
+function ADDON.ExportLayoutProfile(profileId)
+    local profile = findLayoutProfile(profileId)
+    if not profile or profile.system then
+        return nil
+    end
+    return EXPORT_PREFIX .. serializeValue({
+        bindings = profile.bindings or {},
+        defaultBindings = profile.defaultBindings or {},
+        bonusBarBindings = profile.bonusBarBindings or {},
+    })
+end
+
+function ADDON.ImportLayoutProfile(name, importString)
+    ADDON.InitDB()
+    name = trimProfileName(name)
+    if not isLayoutProfileNameAvailable(name) then
+        return false, "name"
+    end
+
+    local layout = sanitizeImportedLayout(deserializeValue(importString))
+    if not layout then
+        return false, "import"
+    end
+
+    DudesFlexBindingsDB.savedLayouts[name] = makeProfile(name, layout, name, false)
+    printMessage("Imported layout '" .. name .. "'.")
+    return true
+end
+
+function ADDON.RenameLayoutProfile(profileId, newName)
+    ADDON.InitDB()
+    local profile = findLayoutProfile(profileId)
+    if not profile or profile.system then
+        return false
+    end
+
+    newName = trimProfileName(newName)
+    if not isLayoutProfileNameAvailable(newName, profileId) then
+        return false
+    end
+
+    local savedProfile = copyTable(profile)
+    savedProfile.id = newName
+    savedProfile.name = newName
+    DudesFlexBindingsDB.savedLayouts[profileId] = nil
+    DudesFlexBindingsDB.savedLayouts[newName] = savedProfile
     return true
 end
 

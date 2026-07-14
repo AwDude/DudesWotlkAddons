@@ -3,6 +3,9 @@
 local optionsPanel
 local minimapButton
 local layoutRows = {}
+local layoutMenu
+local importLayoutDialog
+local exportLayoutDialog
 local positionMinimapButton
 local bonusAnchorSelectorPopup
 local bonusGrowthSelectorPopup
@@ -179,9 +182,9 @@ local function layoutSettingsRows()
     local panelWidth = optionsPanel:GetWidth() or 520
     local rowWidth = clamp(panelWidth - 48, 260, 520)
     local loadWidth = 64
-    local deleteWidth = 76
+    local menuWidth = 34
     local buttonGap = 6
-    local textWidth = math.max(120, rowWidth - loadWidth - deleteWidth - buttonGap - 12)
+    local textWidth = math.max(120, rowWidth - loadWidth - menuWidth - buttonGap * 2 - 12)
     local loadX = textWidth + 8
 
     for _, row in ipairs(optionsPanel.layoutRows) do
@@ -193,9 +196,9 @@ local function layoutSettingsRows()
         row.load:SetWidth(loadWidth)
         row.load:SetPoint("TOPLEFT", row, "TOPLEFT", loadX, -5)
 
-        row.delete:ClearAllPoints()
-        row.delete:SetWidth(deleteWidth)
-        row.delete:SetPoint("LEFT", row.load, "RIGHT", buttonGap, 0)
+        row.menu:ClearAllPoints()
+        row.menu:SetWidth(menuWidth)
+        row.menu:SetPoint("LEFT", row.load, "RIGHT", buttonGap, 0)
     end
 end
 
@@ -231,9 +234,9 @@ local function refreshLayoutRows()
             row.name:SetText(profile.name or "")
             row.meta:SetText((profile.createdAt or "-") .. "  " .. (profile.characterName or "-") .. "  " .. (profile.className or "-") .. "  " .. (profile.specText or "-"))
             if profile.system then
-                row.delete:Hide()
+                row.menu:Hide()
             else
-                row.delete:Show()
+                row.menu:Show()
             end
             row:Show()
             lastVisibleRow = row
@@ -319,6 +322,10 @@ local function refreshBonusBarSettingsControls()
         setFrameEnabled(optionsPanel.clickBonusBarButtonsCheckbox, enabled)
         showFrame(optionsPanel.clickBonusBarButtonsCheckbox, enabled)
     end
+    if optionsPanel.resetBonusBarPositionButton then
+        setFrameEnabled(optionsPanel.resetBonusBarPositionButton, enabled)
+        showFrame(optionsPanel.resetBonusBarPositionButton, enabled)
+    end
     if optionsPanel.bonusBarBindingSizeControl then
         optionsPanel.bonusBarBindingSizeControl.refresh()
         setFrameEnabled(optionsPanel.bonusBarBindingSizeControl.decrease, enabled and settings.showBonusBarBindings)
@@ -330,6 +337,9 @@ local function refreshBonusBarSettingsControls()
     end
     if optionsPanel.characterInterfaceBindingsCheckbox and ADDON.IsCharacterBindingSetEnabled then
         optionsPanel.characterInterfaceBindingsCheckbox:SetChecked(ADDON.IsCharacterBindingSetEnabled())
+    end
+    if optionsPanel.triggerOnKeyDownCheckbox then
+        optionsPanel.triggerOnKeyDownCheckbox:SetChecked(settings.triggerOnKeyDown and true or false)
     end
 end
 
@@ -733,8 +743,14 @@ local function showLoadLayoutDialog(profileId, profileName)
         return
     end
 
+    local loadLayoutText = "Layout '%s' laden?\n\nAktuelle Makros, Interface- und Bonusleisten-Belegungen des aktiven Specs werden ersetzt."
+    local showAccountWarning = ADDON.IsCharacterBindingSetEnabled and not ADDON.IsCharacterBindingSetEnabled()
+    if showAccountWarning then
+        loadLayoutText = loadLayoutText .. "\n\n|cffff3333Warnung: Charakterspezifische Interface-Belegungen sind nicht aktiv. Dadurch werden auch die Interface-Belegungen für alle anderen Charaktere geändert.|r"
+    end
+
     StaticPopupDialogs["DUDES_FLEX_BINDINGS_LOAD_LAYOUT_SETTINGS"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_LOAD_LAYOUT_SETTINGS"] or {
-        text = "Layout '%s' laden?\n\nDieses Layout ersetzt alle aktuellen DudesFlexBindings-Makros und Interface-Belegungen des aktiven Specs.\n\nMöchtest du wirklich fortfahren?",
+        text = loadLayoutText,
         button1 = "Laden",
         button2 = "Abbrechen",
         OnAccept = function(self)
@@ -748,12 +764,26 @@ local function showLoadLayoutDialog(profileId, profileName)
         OnCancel = function(self)
             self.profileId = nil
         end,
+        OnShow = function(self)
+            local data = self.data or {}
+            self:SetWidth(430)
+            self:SetHeight((data.showAccountWarning and 214) or 168)
+            local text = _G[self:GetName() .. "Text"]
+            if text then
+                text:ClearAllPoints()
+                text:SetPoint("TOP", self, "TOP", 0, -20)
+                text:SetWidth(360)
+            end
+        end,
         timeout = 0,
         whileDead = 1,
         hideOnEscape = 1,
     }
+    StaticPopupDialogs["DUDES_FLEX_BINDINGS_LOAD_LAYOUT_SETTINGS"].text = loadLayoutText
 
-    local popup = StaticPopup_Show("DUDES_FLEX_BINDINGS_LOAD_LAYOUT_SETTINGS", profileName or "")
+    local popup = StaticPopup_Show("DUDES_FLEX_BINDINGS_LOAD_LAYOUT_SETTINGS", profileName or "", nil, {
+        showAccountWarning = showAccountWarning,
+    })
     if popup then
         popup.profileId = profileId
         raiseSettingsPopup(popup)
@@ -790,6 +820,368 @@ local function showDeleteLayoutDialog(profileId, profileName)
         popup.profileId = profileId
         raiseSettingsPopup(popup)
     end
+end
+
+local function createDialogFrame(name, titleText, width, height)
+    local dialog = CreateFrame("Frame", name, UIParent)
+    dialog:SetWidth(width)
+    dialog:SetHeight(height)
+    dialog:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    dialog:SetFrameStrata("TOOLTIP")
+    dialog:SetFrameLevel(120)
+    dialog:EnableMouse(true)
+    dialog:SetMovable(true)
+    setBackdrop(dialog, 0.045, 0.052, 0.065, 1)
+
+    dialog.title = createText(dialog, 14)
+    dialog.title:SetPoint("TOPLEFT", dialog, "TOPLEFT", 14, -12)
+    dialog.title:SetText(titleText)
+    dialog.title:SetTextColor(1, 1, 1)
+
+    dialog.dragHandle = CreateFrame("Frame", nil, dialog)
+    dialog.dragHandle:SetPoint("TOPLEFT", dialog, "TOPLEFT", 0, 0)
+    dialog.dragHandle:SetPoint("TOPRIGHT", dialog, "TOPRIGHT", -36, 0)
+    dialog.dragHandle:SetHeight(38)
+    dialog.dragHandle:EnableMouse(true)
+    dialog.dragHandle:SetScript("OnMouseDown", function()
+        dialog:StartMoving()
+    end)
+    dialog.dragHandle:SetScript("OnMouseUp", function()
+        dialog:StopMovingOrSizing()
+    end)
+    dialog:SetScript("OnMouseDown", function(self)
+        self:StartMoving()
+    end)
+    dialog:SetScript("OnMouseUp", function(self)
+        self:StopMovingOrSizing()
+    end)
+
+    dialog.close = CreateFrame("Button", nil, dialog, "UIPanelButtonTemplate")
+    dialog.close:SetWidth(24)
+    dialog.close:SetHeight(22)
+    dialog.close:SetPoint("TOPRIGHT", dialog, "TOPRIGHT", -8, -8)
+    dialog.close:SetText("X")
+    styleButton(dialog.close)
+    dialog.close:SetScript("OnClick", function()
+        dialog:Hide()
+    end)
+
+    dialog:Hide()
+    return dialog
+end
+
+local function makeFrameSolid(frame, r, g, b)
+    if not frame then
+        return
+    end
+    if not frame.solidBackground then
+        frame.solidBackground = frame:CreateTexture(nil, "BACKGROUND")
+        frame.solidBackground:SetAllPoints(frame)
+        frame.solidBackground:SetTexture("Interface\\Buttons\\WHITE8X8")
+    end
+    frame.solidBackground:SetVertexColor(r, g, b, 1)
+end
+
+local function createDialogEditBox(parent, width, height, multiLine)
+    local editBox = CreateFrame("EditBox", nil, parent)
+    editBox:SetWidth(width)
+    editBox:SetHeight(height)
+    editBox:SetAutoFocus(false)
+    editBox:SetFontObject(ChatFontNormal)
+    editBox:SetTextInsets(6, 6, 0, 0)
+    if multiLine then
+        editBox:SetMultiLine(true)
+    end
+    setBackdrop(editBox, 0.075, 0.086, 0.108, 1)
+    addBorderHover(editBox)
+    editBox:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+    end)
+    return editBox
+end
+
+local function createDialogScrollTextBox(parent, name, width, height, editable)
+    local textBox = CreateFrame("Frame", nil, parent)
+    textBox:SetWidth(width)
+    textBox:SetHeight(height)
+    setBackdrop(textBox, 0.075, 0.086, 0.108, 1)
+    makeFrameSolid(textBox, 0.075, 0.086, 0.108)
+
+    local scroll = CreateFrame("ScrollFrame", name, textBox, "UIPanelScrollFrameTemplate")
+    scroll:SetWidth(width - 34)
+    scroll:SetHeight(height - 12)
+    scroll:SetPoint("TOPLEFT", textBox, "TOPLEFT", 6, -6)
+
+    local editBox = CreateFrame("EditBox", nil, scroll)
+    editBox:SetWidth(width - 34)
+    editBox:SetHeight(height - 12)
+    editBox:SetAutoFocus(false)
+    editBox:SetFontObject(ChatFontNormal)
+    editBox:SetTextInsets(0, 0, 0, 0)
+    editBox:SetMultiLine(true)
+    editBox:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+    end)
+    scroll:SetScrollChild(editBox)
+
+    textBox.scroll = scroll
+    textBox.editBox = editBox
+    return textBox, scroll, editBox
+end
+
+local function selectExportText()
+    if not exportLayoutDialog or not exportLayoutDialog.editBox then
+        return
+    end
+    exportLayoutDialog.editBox:SetFocus()
+    exportLayoutDialog.editBox:HighlightText()
+end
+
+local function showDialogError(dialog, message)
+    if not dialog or not dialog.errorText then
+        return
+    end
+    dialog.errorText:SetText(message or "")
+    dialog.errorText:Show()
+end
+
+local function hideDialogError(dialog)
+    if dialog and dialog.errorText then
+        dialog.errorText:Hide()
+    end
+end
+
+local function importLayoutFromDialog()
+    if not importLayoutDialog then
+        return
+    end
+
+    local name = importLayoutDialog.nameEditBox:GetText() or ""
+    local importString = importLayoutDialog.importEditBox:GetText() or ""
+    local ok, reason
+    if ADDON.ImportLayoutProfile then
+        ok, reason = ADDON.ImportLayoutProfile(name, importString)
+    end
+    if ok then
+        importLayoutDialog:Hide()
+        refreshLayoutRows()
+        return
+    end
+
+    if reason == "import" then
+        showDialogError(importLayoutDialog, "Import-String ist ungültig")
+        importLayoutDialog.importEditBox:SetFocus()
+        importLayoutDialog.importEditBox:HighlightText()
+    else
+        showDialogError(importLayoutDialog, "Layout-Name muss eindeutig sein")
+        importLayoutDialog.nameEditBox:SetFocus()
+        importLayoutDialog.nameEditBox:HighlightText()
+    end
+end
+
+local function showImportLayoutDialog()
+    if not importLayoutDialog then
+        importLayoutDialog = createDialogFrame("DudesFlexBindingsImportLayoutDialog", "Layout importieren", 520, 310)
+
+        importLayoutDialog.nameLabel = createText(importLayoutDialog, 11)
+        importLayoutDialog.nameLabel:SetPoint("TOPLEFT", importLayoutDialog, "TOPLEFT", 16, -48)
+        importLayoutDialog.nameLabel:SetText("Name")
+
+        importLayoutDialog.nameEditBox = createDialogEditBox(importLayoutDialog, 488, 22, false)
+        importLayoutDialog.nameEditBox:SetPoint("TOPLEFT", importLayoutDialog.nameLabel, "BOTTOMLEFT", 0, -6)
+
+        importLayoutDialog.importLabel = createText(importLayoutDialog, 11)
+        importLayoutDialog.importLabel:SetPoint("TOPLEFT", importLayoutDialog.nameEditBox, "BOTTOMLEFT", 0, -14)
+        importLayoutDialog.importLabel:SetText("Import-String")
+
+        importLayoutDialog.importTextBox, importLayoutDialog.importScroll, importLayoutDialog.importEditBox = createDialogScrollTextBox(importLayoutDialog, "DudesFlexBindingsImportLayoutScrollFrame", 488, 126, true)
+        importLayoutDialog.importTextBox:SetPoint("TOPLEFT", importLayoutDialog.importLabel, "BOTTOMLEFT", 0, -6)
+
+        importLayoutDialog.errorText = createText(importLayoutDialog, 10)
+        importLayoutDialog.errorText:SetPoint("TOPLEFT", importLayoutDialog.importTextBox, "BOTTOMLEFT", 0, -8)
+        importLayoutDialog.errorText:SetPoint("RIGHT", importLayoutDialog, "RIGHT", -16, 0)
+        importLayoutDialog.errorText:SetTextColor(1, 0.25, 0.18)
+        importLayoutDialog.errorText:Hide()
+
+        importLayoutDialog.importButton = CreateFrame("Button", nil, importLayoutDialog, "UIPanelButtonTemplate")
+        importLayoutDialog.importButton:SetWidth(110)
+        importLayoutDialog.importButton:SetHeight(24)
+        importLayoutDialog.importButton:SetPoint("BOTTOMRIGHT", importLayoutDialog, "BOTTOMRIGHT", -16, 16)
+        importLayoutDialog.importButton:SetText("Importieren")
+        styleButton(importLayoutDialog.importButton)
+        importLayoutDialog.importButton:SetScript("OnClick", importLayoutFromDialog)
+
+        importLayoutDialog.nameEditBox:SetScript("OnEnterPressed", importLayoutFromDialog)
+    end
+
+    hideDialogError(importLayoutDialog)
+    importLayoutDialog.nameEditBox:SetText("")
+    importLayoutDialog.importEditBox:SetText("")
+    importLayoutDialog:Show()
+    importLayoutDialog.nameEditBox:SetFocus()
+end
+
+local function showExportLayoutDialog(profileId, profileName)
+    local exportString = ADDON.ExportLayoutProfile and ADDON.ExportLayoutProfile(profileId)
+    if not exportString then
+        return
+    end
+
+    if not exportLayoutDialog then
+        exportLayoutDialog = createDialogFrame("DudesFlexBindingsExportLayoutDialog", "Layout exportieren", 540, 230)
+        makeFrameSolid(exportLayoutDialog, 0.045, 0.052, 0.065)
+
+        exportLayoutDialog.label = createText(exportLayoutDialog, 11)
+        exportLayoutDialog.label:SetPoint("TOPLEFT", exportLayoutDialog, "TOPLEFT", 16, -48)
+        exportLayoutDialog.label:SetText("Export-String")
+
+        exportLayoutDialog.textBox, exportLayoutDialog.scroll, exportLayoutDialog.editBox = createDialogScrollTextBox(exportLayoutDialog, "DudesFlexBindingsExportLayoutScrollFrame", 508, 132, false)
+        exportLayoutDialog.textBox:SetPoint("TOPLEFT", exportLayoutDialog.label, "BOTTOMLEFT", 0, -6)
+        exportLayoutDialog.editBox:SetScript("OnEditFocusGained", selectExportText)
+        exportLayoutDialog.editBox:SetScript("OnMouseDown", selectExportText)
+        exportLayoutDialog.editBox:SetScript("OnMouseUp", selectExportText)
+        exportLayoutDialog.editBox:SetScript("OnTextChanged", function(self)
+            if exportLayoutDialog.suppressExportTextChanged then
+                return
+            end
+            if (self:GetText() or "") ~= (exportLayoutDialog.exportString or "") then
+                exportLayoutDialog.suppressExportTextChanged = true
+                self:SetText(exportLayoutDialog.exportString or "")
+                exportLayoutDialog.suppressExportTextChanged = nil
+                selectExportText()
+            end
+        end)
+    end
+
+    exportLayoutDialog.title:SetText("Layout exportieren: " .. (profileName or ""))
+    exportLayoutDialog.exportString = exportString
+    exportLayoutDialog.suppressExportTextChanged = true
+    exportLayoutDialog.editBox:SetText(exportString)
+    exportLayoutDialog.suppressExportTextChanged = nil
+    exportLayoutDialog:Show()
+    selectExportText()
+end
+
+local function renameLayoutFromDialog(popup)
+    if not popup then
+        return false
+    end
+    local profileId = popup.profileId
+    local name = popup.editBox and popup.editBox:GetText() or ""
+    if profileId and ADDON.RenameLayoutProfile and ADDON.RenameLayoutProfile(profileId, name) then
+        hideSaveLayoutError(popup)
+        popup:Hide()
+        refreshLayoutRows()
+        return true
+    end
+    showSaveLayoutError(popup, "Layout-Name muss eindeutig sein")
+    if popup.editBox then
+        popup.editBox:SetFocus()
+        popup.editBox:HighlightText()
+    end
+    return false
+end
+
+local function showRenameLayoutDialog(profileId, profileName)
+    if not profileId then
+        return
+    end
+
+    StaticPopupDialogs["DUDES_FLEX_BINDINGS_RENAME_LAYOUT_SETTINGS"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_RENAME_LAYOUT_SETTINGS"] or {
+        text = "Neuer Layout-Name",
+        button1 = "Umbenennen",
+        button2 = "Abbrechen",
+        hasEditBox = 1,
+        maxLetters = 64,
+        OnAccept = function(self)
+            renameLayoutFromDialog(self)
+        end,
+        OnShow = function(self)
+            self.saveLayoutBaseHeight = self:GetHeight()
+            hideSaveLayoutError(self)
+            local button = _G[self:GetName() .. "Button1"]
+            if button then
+                button:SetScript("OnClick", function()
+                    renameLayoutFromDialog(self)
+                end)
+            end
+        end,
+        OnHide = function(self)
+            self.profileId = nil
+            hideSaveLayoutError(self)
+        end,
+        EditBoxOnEnterPressed = function(self)
+            renameLayoutFromDialog(self:GetParent())
+        end,
+        timeout = 0,
+        whileDead = 1,
+        hideOnEscape = 1,
+    }
+
+    local popup = StaticPopup_Show("DUDES_FLEX_BINDINGS_RENAME_LAYOUT_SETTINGS")
+    if popup then
+        popup.profileId = profileId
+        if popup.editBox then
+            popup.editBox:SetText(profileName or "")
+            popup.editBox:SetFocus()
+            popup.editBox:HighlightText()
+        end
+        raiseSettingsPopup(popup)
+    end
+end
+
+local function createLayoutMenuButton(parent, index, text, onClick)
+    local button = CreateFrame("Button", nil, parent)
+    button:SetWidth(126)
+    button:SetHeight(24)
+    button:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, -8 - (index - 1) * 26)
+    styleButton(button)
+    button.text = createText(button, 11)
+    button.text:SetAllPoints(button)
+    button.text:SetJustifyH("CENTER")
+    button.text:SetText(text)
+    button:SetScript("OnClick", onClick)
+    return button
+end
+
+local function showLayoutMenu(owner, profileId, profileName)
+    if not owner or not profileId then
+        return
+    end
+
+    if not layoutMenu then
+        layoutMenu = CreateFrame("Frame", "DudesFlexBindingsLayoutMenu", UIParent)
+        layoutMenu:SetWidth(142)
+        layoutMenu:SetHeight(86)
+        layoutMenu:SetFrameStrata("TOOLTIP")
+        layoutMenu:SetFrameLevel(115)
+        setBackdrop(layoutMenu, 0.045, 0.052, 0.065, 1)
+        layoutMenu.exportButton = createLayoutMenuButton(layoutMenu, 1, "Exportieren", function()
+            showExportLayoutDialog(layoutMenu.profileId, layoutMenu.profileName)
+            layoutMenu:Hide()
+        end)
+        layoutMenu.renameButton = createLayoutMenuButton(layoutMenu, 2, "Umbenennen", function()
+            showRenameLayoutDialog(layoutMenu.profileId, layoutMenu.profileName)
+            layoutMenu:Hide()
+        end)
+        layoutMenu.deleteButton = createLayoutMenuButton(layoutMenu, 3, "Löschen", function()
+            showDeleteLayoutDialog(layoutMenu.profileId, layoutMenu.profileName)
+            layoutMenu:Hide()
+        end)
+        layoutMenu:Hide()
+    end
+
+    if layoutMenu:IsShown() and layoutMenu.owner == owner then
+        layoutMenu:Hide()
+        return
+    end
+
+    layoutMenu.owner = owner
+    layoutMenu.profileId = profileId
+    layoutMenu.profileName = profileName
+    layoutMenu:ClearAllPoints()
+    layoutMenu:SetPoint("TOPLEFT", owner, "BOTTOMLEFT", -104, -4)
+    layoutMenu:Show()
 end
 
 local function createOptionsPanel()
@@ -858,10 +1250,19 @@ local function createOptionsPanel()
         end
     end)
 
+    optionsPanel.triggerOnKeyDownCheckbox = createCheckbox(content, optionsPanel.characterInterfaceBindingsCheckbox, -4, "Tasten beim Drücken auslösen", function()
+        return ADDON.GetSettings().triggerOnKeyDown
+    end, function(value)
+        ADDON.GetSettings().triggerOnKeyDown = value
+        if ADDON.UpdateRuntimeButtonClickRegistration then
+            return ADDON.UpdateRuntimeButtonClickRegistration()
+        end
+    end)
+
     local openLayoutButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
     openLayoutButton:SetWidth(160)
     openLayoutButton:SetHeight(24)
-    openLayoutButton:SetPoint("TOPLEFT", optionsPanel.characterInterfaceBindingsCheckbox, "BOTTOMLEFT", 2, -16)
+    openLayoutButton:SetPoint("TOPLEFT", optionsPanel.triggerOnKeyDownCheckbox, "BOTTOMLEFT", 2, -16)
     openLayoutButton:SetText("Layout Editor")
     styleButton(openLayoutButton)
     openLayoutButton:SetScript("OnClick", function()
@@ -882,6 +1283,15 @@ local function createOptionsPanel()
     styleButton(saveLayoutButton)
     saveLayoutButton:SetScript("OnClick", showSaveLayoutDialog)
     optionsPanel.saveLayoutButton = saveLayoutButton
+
+    local importLayoutButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    importLayoutButton:SetWidth(120)
+    importLayoutButton:SetHeight(24)
+    importLayoutButton:SetPoint("LEFT", saveLayoutButton, "RIGHT", 8, 0)
+    importLayoutButton:SetText("Importieren")
+    styleButton(importLayoutButton)
+    importLayoutButton:SetScript("OnClick", showImportLayoutDialog)
+    optionsPanel.importLayoutButton = importLayoutButton
 
     optionsPanel.layoutRows = layoutRows
     for i = 1, 8 do
@@ -912,16 +1322,16 @@ local function createOptionsPanel()
             end
         end)
 
-        row.delete = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-        row.delete:SetWidth(70)
-        row.delete:SetHeight(22)
-        row.delete:SetPoint("LEFT", row.load, "RIGHT", 6, 0)
-        row.delete:SetText("Löschen")
-        styleButton(row.delete)
-        row.delete:SetScript("OnClick", function(self)
+        row.menu = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        row.menu:SetWidth(34)
+        row.menu:SetHeight(22)
+        row.menu:SetPoint("LEFT", row.load, "RIGHT", 6, 0)
+        row.menu:SetText("...")
+        styleButton(row.menu)
+        row.menu:SetScript("OnClick", function(self)
             local parent = self:GetParent()
             if parent.profileId then
-                showDeleteLayoutDialog(parent.profileId, parent.name:GetText())
+                showLayoutMenu(self, parent.profileId, parent.name:GetText())
             end
         end)
 
@@ -979,6 +1389,22 @@ local function createOptionsPanel()
         return ADDON.GetSettings().clickBonusBarButtons
     end, function(value)
         ADDON.GetSettings().clickBonusBarButtons = value
+        if ADDON.RefreshEditorBindings then
+            ADDON.RefreshEditorBindings()
+        end
+    end)
+
+    optionsPanel.resetBonusBarPositionButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    optionsPanel.resetBonusBarPositionButton:SetWidth(178)
+    optionsPanel.resetBonusBarPositionButton:SetHeight(24)
+    optionsPanel.resetBonusBarPositionButton:SetPoint("TOPLEFT", optionsPanel.clickBonusBarButtonsCheckbox, "BOTTOMLEFT", 2, -8)
+    optionsPanel.resetBonusBarPositionButton:SetText("Bonusleiste zurücksetzen")
+    styleButton(optionsPanel.resetBonusBarPositionButton)
+    optionsPanel.resetBonusBarPositionButton:SetScript("OnClick", function()
+        if ADDON.ResetBonusBar then
+            ADDON.ResetBonusBar()
+        end
+        refreshBonusBarSettingsControls()
         if ADDON.RefreshEditorBindings then
             ADDON.RefreshEditorBindings()
         end

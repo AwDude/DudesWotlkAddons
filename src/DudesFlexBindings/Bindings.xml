@@ -1,0 +1,7 @@
+<Bindings>
+    <Binding name="DUDESFLEXBINDINGS_TOGGLE" header="DUDESADDONS">
+        if DudesFlexBindings.ToggleOverlay then
+            DudesFlexBindings.ToggleOverlay()
+        end
+    </Binding>
+</Bindings>

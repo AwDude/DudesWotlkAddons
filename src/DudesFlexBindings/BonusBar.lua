@@ -19,6 +19,14 @@ local SLOT_COUNT = 12
 local REFRESH_BURST_DELAY = 0.12
 local REFRESH_BURST_COUNT = 8
 local PRESS_ANIMATION_DURATION = 0.12
+local DEFAULT_POINT = "BOTTOM"
+local DEFAULT_RELATIVE_POINT = "BOTTOM"
+local DEFAULT_X_OFS = 0
+local DEFAULT_Y_OFS = 160
+local DEFAULT_WIDTH = 460
+local DEFAULT_HEIGHT = 46
+local DEFAULT_ANCHOR = "topLeft"
+local DEFAULT_GROWTH_DIRECTION = "right"
 local ANCHORS = {
     topLeft = true,
     top = true,
@@ -71,17 +79,17 @@ end
 local function getSettings()
     local settings = ADDON.GetSettings()
     settings.bonusBar = settings.bonusBar or {}
-    settings.bonusBar.point = settings.bonusBar.point or "BOTTOM"
-    settings.bonusBar.relativePoint = settings.bonusBar.relativePoint or "BOTTOM"
-    settings.bonusBar.xOfs = settings.bonusBar.xOfs or 0
-    settings.bonusBar.yOfs = settings.bonusBar.yOfs or 160
-    settings.bonusBar.width = settings.bonusBar.width or 460
-    settings.bonusBar.height = settings.bonusBar.height or 46
+    settings.bonusBar.point = settings.bonusBar.point or DEFAULT_POINT
+    settings.bonusBar.relativePoint = settings.bonusBar.relativePoint or DEFAULT_RELATIVE_POINT
+    settings.bonusBar.xOfs = settings.bonusBar.xOfs or DEFAULT_X_OFS
+    settings.bonusBar.yOfs = settings.bonusBar.yOfs or DEFAULT_Y_OFS
+    settings.bonusBar.width = settings.bonusBar.width or DEFAULT_WIDTH
+    settings.bonusBar.height = settings.bonusBar.height or DEFAULT_HEIGHT
     if not ANCHORS[settings.bonusBarAnchor] then
-        settings.bonusBarAnchor = "topLeft"
+        settings.bonusBarAnchor = DEFAULT_ANCHOR
     end
     if not GROWTH_DIRECTIONS[settings.bonusBarGrowthDirection] then
-        settings.bonusBarGrowthDirection = "right"
+        settings.bonusBarGrowthDirection = DEFAULT_GROWTH_DIRECTION
     end
     return settings
 end
@@ -486,10 +494,31 @@ end
 
 local function loadPlacement()
     local settings = getSettings().bonusBar
-    frame:SetWidth(settings.width or 460)
-    frame:SetHeight(settings.height or 46)
+    frame:SetWidth(settings.width or DEFAULT_WIDTH)
+    frame:SetHeight(settings.height or DEFAULT_HEIGHT)
     frame:ClearAllPoints()
-    frame:SetPoint(settings.point or "BOTTOM", UIParent, settings.relativePoint or "BOTTOM", settings.xOfs or 0, settings.yOfs or 160)
+    frame:SetPoint(settings.point or DEFAULT_POINT, UIParent, settings.relativePoint or DEFAULT_RELATIVE_POINT, settings.xOfs or DEFAULT_X_OFS, settings.yOfs or DEFAULT_Y_OFS)
+end
+
+function ADDON.ResetBonusBar()
+    local settings = getSettings()
+    settings.bonusBar.point = DEFAULT_POINT
+    settings.bonusBar.relativePoint = DEFAULT_RELATIVE_POINT
+    settings.bonusBar.xOfs = DEFAULT_X_OFS
+    settings.bonusBar.yOfs = DEFAULT_Y_OFS
+    settings.bonusBar.width = DEFAULT_WIDTH
+    settings.bonusBar.height = DEFAULT_HEIGHT
+    settings.bonusBarAnchor = DEFAULT_ANCHOR
+    settings.bonusBarGrowthDirection = DEFAULT_GROWTH_DIRECTION
+
+    if frame then
+        frame:SetWidth(DEFAULT_WIDTH)
+        frame:SetHeight(DEFAULT_HEIGHT)
+        frame:ClearAllPoints()
+        frame:SetPoint(DEFAULT_POINT, UIParent, DEFAULT_RELATIVE_POINT, DEFAULT_X_OFS, DEFAULT_Y_OFS)
+        ADDON.RefreshBonusBar()
+    end
+    return true
 end
 
 local function layoutButtons(buttonCount)
