@@ -4,3 +4,8 @@
 
 PROBLEM: Boss erkennung
 - benötigt wahrscheinlich datenbank
+
+FlexFrames:
+- Funktion hinzufügen um offene würfelfenster auch nach einem /reload oder instanz wechsel anzuzeigen
+- würfel spacing einstellbar
+- würfel als grid

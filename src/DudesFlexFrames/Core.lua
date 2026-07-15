@@ -1,3 +1,7 @@
+DudesFlexFrames = DudesFlexFrames or {}
+DudesFlexFrames_Positions = DudesFlexFrames_Positions or {}
+DudesFlexFrames_Scales = DudesFlexFrames_Scales or {}
+
 local NO_DRAG_TARGETS = {}
 local flexFrameNames = {
     DudesFlexFrames_GroupLootParent = {"GroupLootFrame1", "GroupLootFrame2", "GroupLootFrame3", "GroupLootFrame4"},
@@ -41,8 +45,6 @@ local scaleFrameNames = {
 	"CharacterModelFrame",
 	"DressUpModel"
 }
-if not DudesFlexFrames_Positions then DudesFlexFrames_Positions = {} end
-if not DudesFlexFrames_Scales then DudesFlexFrames_Scales = {} end
 
 local function enableBlizzardAutoClose(frameName)
 	if UISpecialFrames and not DudesUtils.Array.Contains(UISpecialFrames, frameName) then
@@ -201,6 +203,31 @@ local function init()
 			Atr_Mask.Show = function()	end
 		end
 	end
+end
+
+local function resetFrame(frame)
+	if frame then
+		frame:SetScale(1)
+		frame:StopMovingOrSizing()
+		if frame:IsUserPlaced() then
+		    frame:SetUserPlaced(false)
+		end
+		frame.DudesFlexFrames_Init = nil
+	end
+end
+
+function DudesFlexFrames.ResetFrames()
+	DudesFlexFrames_Positions = {}
+	DudesFlexFrames_Scales = {}
+
+	for flexFrameName in pairs(flexFrameNames) do
+		resetFrame(_G[flexFrameName])
+	end
+	for _, scaleFrameName in ipairs(scaleFrameNames) do
+		resetFrame(_G[scaleFrameName])
+	end
+
+	ReloadUI()
 end
 
 -- ADDON_LOADED is called for every Addon loaded first time, also internal ones

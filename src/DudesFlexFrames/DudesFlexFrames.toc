@@ -6,4 +6,5 @@
 ## SavedVariables: DudesFlexFrames_Positions, DudesFlexFrames_Scales
 ## Dependencies: DudesUtils
 
-DudesFlexFrames.lua
+Core.lua
+Settings.lua
