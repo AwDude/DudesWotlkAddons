@@ -5,15 +5,14 @@ local currentLootSegment
 local lastNormalLootTime
 local pendingLootDecisions = {}
 local lastDisenchantLoot
+local registeredLootChatFilter
 local LOOT_GROUP_SECONDS = 8
 local PENDING_DECISION_SECONDS = 120
 
 local function shouldAutoOpen(segmentType, reason)
     local settings = ADDON.GetSettings()
-    if segmentType == "boss" then
+    if segmentType == "boss" or segmentType == "miniBoss" then
         return settings.autoOpenOnBossLoot
-    elseif segmentType == "miniBoss" then
-        return settings.autoOpenOnEliteLoot
     end
     return settings.autoOpenOnNormalLoot
 end
@@ -67,6 +66,16 @@ local function createOrReuseSegment(segmentType, sourceName)
     return segment
 end
 
+local function resolveRecipientMethod(defaultMethod, rollInfo, item)
+    if rollInfo and rollInfo.method then
+        return rollInfo.method
+    end
+    if defaultMethod == "loot" and item and item.blizzardRollStarted and item.rollMethod then
+        return item.rollMethod
+    end
+    return defaultMethod
+end
+
 local function addItemToSegment(segment, link, recipient, rollInfo, count)
     local itemId = ADDON.GetItemId(link)
     local recipientMethod = (rollInfo and rollInfo.method) or (segment and segment.lootMethod == "master" and "master") or "loot"
@@ -84,11 +93,12 @@ local function addItemToSegment(segment, link, recipient, rollInfo, count)
                 end
             end
             if recipient and recipient ~= "" and (not hasRecipient or sameRecipient) then
+                local method = resolveRecipientMethod(recipientMethod, rollInfo, existing)
                 existing.recipients = existing.recipients or {}
                 if not sameRecipient then
-                    table.insert(existing.recipients, { name = recipient, method = recipientMethod, timestamp = ADDON.GetNow() })
-                elseif sameRecipientEntry and rollInfo and rollInfo.method then
-                    sameRecipientEntry.method = recipientMethod
+                    table.insert(existing.recipients, { name = recipient, method = method, timestamp = ADDON.GetNow() })
+                elseif sameRecipientEntry and method then
+                    sameRecipientEntry.method = method
                 end
                 return existing
             elseif not recipient and hasRecipient then
@@ -101,9 +111,10 @@ local function addItemToSegment(segment, link, recipient, rollInfo, count)
         for i = #(segment.items or {}), 1, -1 do
             local existing = segment.items[i]
             if existing.itemId == itemId and #(existing.recipients or {}) == 0 then
+                local method = resolveRecipientMethod(recipientMethod, rollInfo, existing)
                 existing.count = math.max(tonumber(existing.count or 1) or 1, tonumber(count or 1) or 1)
                 existing.recipients = existing.recipients or {}
-                table.insert(existing.recipients, { name = recipient, method = recipientMethod, timestamp = ADDON.GetNow() })
+                table.insert(existing.recipients, { name = recipient, method = method, timestamp = ADDON.GetNow() })
                 return existing
             end
         end
@@ -116,18 +127,19 @@ local function addItemToSegment(segment, link, recipient, rollInfo, count)
         tracked = itemId and ADDON.FindRecipientCandidateByItemId(itemId)
     end
     if tracked and recipient and recipient ~= "" then
+        local method = resolveRecipientMethod(recipientMethod, rollInfo, tracked)
         tracked.count = math.max(tonumber(tracked.count or 1) or 1, tonumber(count or 1) or 1)
         tracked.recipients = tracked.recipients or {}
         local found
         for _, trackedRecipient in ipairs(tracked.recipients) do
             if trackedRecipient.name == recipient then
-                trackedRecipient.method = recipientMethod or trackedRecipient.method or "loot"
+                trackedRecipient.method = method or trackedRecipient.method or "loot"
                 found = true
                 break
             end
         end
         if not found then
-            table.insert(tracked.recipients, { name = recipient, method = recipientMethod, timestamp = ADDON.GetNow() })
+            table.insert(tracked.recipients, { name = recipient, method = method, timestamp = ADDON.GetNow() })
         end
         return tracked
     end
@@ -135,6 +147,9 @@ local function addItemToSegment(segment, link, recipient, rollInfo, count)
     local item = ADDON.BuildItem(link, count)
     item.id = ADDON.AllocateItemId()
     item.timestamp = ADDON.GetNow()
+    if rollInfo and rollInfo.method then
+        item.rollMethod = rollInfo.method
+    end
     if recipient and recipient ~= "" then
         table.insert(item.recipients, { name = recipient, method = recipientMethod, timestamp = ADDON.GetNow() })
     end
@@ -299,6 +314,7 @@ function ADDON.SetPendingLootDecision(item, method)
     if not item or not item.itemId or not method then
         return
     end
+    item.rollMethod = method
     pendingLootDecisions[item.itemId] = {
         itemDbId = item.id,
         method = method,
@@ -313,21 +329,6 @@ local function handleEncounterEnd(encounterName, success)
             timestamp = ADDON.GetNow(),
         }
         currentLootSegment = nil
-    end
-end
-
-local function handleCombatLogEvent(...)
-    local subEvent = select(2, ...)
-    if subEvent ~= "UNIT_DIED" and subEvent ~= "PARTY_KILL" then
-        return
-    end
-
-    local destName = select(7, ...)
-    if not destName or ADDON.ClassifyLootSource(destName, "normal") == "normal" then
-        destName = select(9, ...)
-    end
-    if destName and ADDON.ClassifyLootSource(destName, "normal") == "miniBoss" then
-        handleEncounterEnd(destName, true)
     end
 end
 
@@ -394,11 +395,14 @@ function ADDON.TrackRollLootItem(link)
 end
 
 function ADDON.InitializeTracker()
+    if ChatFrame_AddMessageEventFilter and not registeredLootChatFilter then
+        ChatFrame_AddMessageEventFilter("CHAT_MSG_LOOT", function()
+            return ADDON.GetSettings().hideLootChatMessages and true or false
+        end)
+        registeredLootChatFilter = true
+    end
     DudesUtils.EventHandler.Add("CHAT_MSG_LOOT", function(_, message)
         handleLootMessage(message)
-    end)
-    DudesUtils.EventHandler.Add("COMBAT_LOG_EVENT_UNFILTERED", function(_, ...)
-        handleCombatLogEvent(...)
     end)
     DudesUtils.EventHandler.Add("LOOT_OPENED", function()
         handleLootOpened()

@@ -46,16 +46,22 @@ local bonusAnchorSelectorPopup
 local bonusGrowthSelectorPopup
 
 local EDITOR_FRAME_LEVEL = 40
+local EDITOR_HEIGHT = 612
+local HEADER_BUTTON_WIDTH = 34
+local HEADER_BUTTON_HEIGHT = 22
+local MODE_BUTTON_Y = -52
 local PICKER_FRAME_LEVEL = 80
-local ICON_ROW_START_Y = -294
+local SELECTED_ICON_TITLE_Y = -252
+local ICON_ROW_START_Y = -272
 local ICON_ROW_STEP = 34
 local ICON_SEARCH_GAP = 10
-local ICON_SUGGESTION_GAP = 34
+local ICON_SUGGESTION_GAP = 26
 local ICON_SUGGESTION_COLUMNS = 3
 local ICON_SUGGESTION_ROWS = 4
 local SECTION_TITLE_SIZE = 15
-local SECTION_TITLE_Y = -108
-local SECTION_CONTENT_Y = -138
+local SECTION_TITLE_Y = -96
+local SECTION_CONTENT_Y = -126
+local MACRO_CONTENT_Y = -116
 local BINDING_ROW_HEIGHT = 34
 local BINDING_ROW_STEP = 35
 local MACRO_LOCK_WARNING_TEXT = "Makro deaktiviert: Die Haupttaste ist als Interface-Aktion gebunden"
@@ -307,7 +313,7 @@ local function layoutIconControls()
     end
     if editor.iconNextButton then
         editor.iconNextButton:ClearAllPoints()
-        editor.iconNextButton:SetPoint("TOPRIGHT", editor, "TOPRIGHT", -22, ICON_ROW_START_Y + 1)
+        editor.iconNextButton:SetPoint("TOPRIGHT", editor, "TOPRIGHT", -22, SELECTED_ICON_TITLE_Y + 1)
     end
     if editor.iconPageText then
         editor.iconPageText:ClearAllPoints()
@@ -1287,7 +1293,7 @@ setEditorMode = function(mode)
     local showMacro = mode == "macro"
     local showBonus = mode == "bonus"
 
-    editor:SetHeight(640)
+    editor:SetHeight(EDITOR_HEIGHT)
 
     setModeButtonActive(editor.interfaceModeButton, showInterface)
     setModeButtonActive(editor.macroModeButton, showMacro)
@@ -2293,7 +2299,7 @@ local function createInlineActionButton(parent, index)
     local button = CreateFrame("Button", nil, parent)
     button:SetWidth(594)
     button:SetHeight(34)
-    button:SetPoint("TOPLEFT", parent, "TOPLEFT", 22, -380 - (index - 1) * 39)
+    button:SetPoint("TOPLEFT", parent, "TOPLEFT", 22, -368 - (index - 1) * 39)
     addShadow(button)
     setBackdrop(button, 0.078, 0.09, 0.112, 1)
 
@@ -2337,7 +2343,7 @@ local function createModeButton(parent, label, mode, x)
     local button = CreateFrame("Button", nil, parent)
     button:SetWidth(118)
     button:SetHeight(28)
-    button:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -62)
+    button:SetPoint("TOPLEFT", parent, "TOPLEFT", x, MODE_BUTTON_Y)
     addShadow(button)
     setBackdrop(button, 0.065, 0.075, 0.095, 1)
     button.text = createText(button, 13, "CENTER")
@@ -2387,7 +2393,7 @@ local function createSuggestionButton(parent, index)
         highlight:SetVertexColor(0, 0, 0, 0)
     end
     addBorderHover(button)
-    button:SetPoint("TOPLEFT", parent, "TOPLEFT", 22 + ((index - 1) % 3) * 196, -526 - math.floor((index - 1) / 3) * 32)
+    button:SetPoint("TOPLEFT", parent, "TOPLEFT", 22 + ((index - 1) % 3) * 196, -514 - math.floor((index - 1) / 3) * 32)
     button:Hide()
     return button
 end
@@ -2417,7 +2423,7 @@ local function createSelectedIconRow(parent, index)
     local row = CreateFrame("Button", nil, parent)
     row:SetWidth(580)
     row:SetHeight(30)
-    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 22, -294 - (index - 1) * 34)
+    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 22, ICON_ROW_START_Y - (index - 1) * 34)
     row:RegisterForDrag("LeftButton")
     row:EnableMouse(true)
     addShadow(row)
@@ -2549,7 +2555,7 @@ local function createMatrixColumnHeader(parent, index)
     local header = CreateFrame("Frame", nil, parent)
     header:SetWidth(28)
     header:SetHeight(22)
-    header:SetPoint("TOPLEFT", parent, "TOPLEFT", 88 + (index - 1) * 34, -294)
+    header:SetPoint("TOPLEFT", parent, "TOPLEFT", 88 + (index - 1) * 34, ICON_ROW_START_Y)
 
     header.texture = header:CreateTexture(nil, "ARTWORK")
     header.texture:SetWidth(20)
@@ -2731,7 +2737,7 @@ local function createEditor()
 
     editor = CreateFrame("Frame", "DudesFlexBindingsEditor", UIParent)
     editor:SetWidth(640)
-    editor:SetHeight(640)
+    editor:SetHeight(EDITOR_HEIGHT)
     editor:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     editor:SetFrameStrata("FULLSCREEN_DIALOG")
     editor:SetFrameLevel(EDITOR_FRAME_LEVEL)
@@ -2758,14 +2764,14 @@ local function createEditor()
     setBackdrop(editor, 0.078, 0.088, 0.105, 1)
     createSolidTexture(editor, 0.078, 0.088, 0.105)
 
-    editor.title = createText(editor, 20)
+    editor.title = createText(editor, 17)
     editor.title:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -20)
     setHeadingText(editor.title)
 
     local close = CreateFrame("Button", nil, editor, "UIPanelButtonTemplate")
-    close:SetWidth(36)
-    close:SetHeight(30)
-    close:SetPoint("TOPRIGHT", editor, "TOPRIGHT", -16, -16)
+    close:SetWidth(HEADER_BUTTON_WIDTH)
+    close:SetHeight(HEADER_BUTTON_HEIGHT)
+    close:SetPoint("TOPRIGHT", editor, "TOPRIGHT", -16, -14)
     close:SetText("X")
     styleButton(close)
     close:SetScript("OnClick", function()
@@ -2777,7 +2783,7 @@ local function createEditor()
 
     local resetKey = CreateFrame("Button", nil, editor, "UIPanelButtonTemplate")
     resetKey:SetWidth(104)
-    resetKey:SetHeight(30)
+    resetKey:SetHeight(HEADER_BUTTON_HEIGHT)
     resetKey:SetPoint("RIGHT", close, "LEFT", -8, 0)
     resetKey:SetText("Zurücksetzen")
     styleButton(resetKey)
@@ -2867,7 +2873,7 @@ local function createEditor()
     end
 
     editor.bonusSettingsTitle = createText(editor, SECTION_TITLE_SIZE)
-    editor.bonusSettingsTitle:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -307)
+    editor.bonusSettingsTitle:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -295)
     editor.bonusSettingsTitle:SetText("Bonusleisten Anzeige")
     setHeadingText(editor.bonusSettingsTitle)
 
@@ -2922,14 +2928,14 @@ local function createEditor()
     }
 
     editor.actionListTitle = createText(editor, SECTION_TITLE_SIZE)
-    editor.actionListTitle:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -326)
+    editor.actionListTitle:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -314)
     editor.actionListTitle:SetText("Interface Suche")
     setHeadingText(editor.actionListTitle)
 
     editor.actionFilter = CreateFrame("EditBox", nil, editor)
     editor.actionFilter:SetWidth(380)
     editor.actionFilter:SetHeight(20)
-    editor.actionFilter:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -350)
+    editor.actionFilter:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -338)
     editor.actionFilter:SetAutoFocus(false)
     editor.actionFilter:SetFontObject(ChatFontNormal)
     editor.actionFilter:SetTextInsets(6, 6, 0, 0)
@@ -3008,7 +3014,7 @@ local function createEditor()
     editor.macroLockWarning:Hide()
 
     local macroBox = CreateFrame("Frame", nil, editor)
-    macroBox:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, SECTION_CONTENT_Y)
+    macroBox:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, MACRO_CONTENT_Y)
     macroBox:SetWidth(580)
     macroBox:SetHeight(112)
     addShadow(macroBox)
@@ -3060,7 +3066,7 @@ local function createEditor()
     scroll:SetScrollChild(editor.macroEditBox)
 
     local selectedLabel = createText(editor, SECTION_TITLE_SIZE)
-    selectedLabel:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -264)
+    selectedLabel:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, SELECTED_ICON_TITLE_Y)
     selectedLabel:SetText("Icons")
     setHeadingText(selectedLabel)
     editor.iconMatrixTitle = selectedLabel
@@ -3079,7 +3085,7 @@ local function createEditor()
     editor.iconPrevButton = CreateFrame("Button", nil, editor, "UIPanelButtonTemplate")
     editor.iconPrevButton:SetWidth(28)
     editor.iconPrevButton:SetHeight(22)
-    editor.iconPrevButton:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -464)
+    editor.iconPrevButton:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -452)
     editor.iconPrevButton:SetText("<")
     styleButton(editor.iconPrevButton)
     editor.iconPrevButton:SetScript("OnClick", function()
@@ -3108,7 +3114,7 @@ local function createEditor()
     editor.iconSearch = CreateFrame("EditBox", nil, editor)
     editor.iconSearch:SetWidth(300)
     editor.iconSearch:SetHeight(20)
-    editor.iconSearch:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -492)
+    editor.iconSearch:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, -480)
     editor.iconSearch:SetAutoFocus(false)
     editor.iconSearch:SetFontObject(ChatFontNormal)
     editor.iconSearch:SetTextInsets(6, 6, 0, 0)

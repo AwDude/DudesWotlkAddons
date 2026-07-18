@@ -12,20 +12,6 @@ local QUALITY_COLORS = {
     [7] = "e6cc80",
 }
 
-local MINI_BOSS_NAMES = {
-    ["cache of the dreamwalker"] = true,
-    ["gunship armory"] = true,
-    ["schatz"] = true,
-    ["cache"] = true,
-}
-
-local function normalizeName(name)
-    name = string.lower(name or "")
-    name = string.gsub(name, "^%s+", "")
-    name = string.gsub(name, "%s+$", "")
-    return name
-end
-
 local function parseItemId(link)
     if not link then
         return nil
@@ -191,10 +177,6 @@ function ADDON.ClassifyLootSource(sourceName, fallbackType, unit)
     if unit and UnitClassification and UnitClassification(unit) == "worldboss" then
         return "boss"
     end
-    local key = normalizeName(sourceName)
-    if MINI_BOSS_NAMES[key] then
-        return "miniBoss"
-    end
     return fallbackType or "normal"
 end
 
@@ -208,19 +190,15 @@ function ADDON.GetLootMethodContext()
 end
 
 function ADDON.GetSegmentColor(segmentType)
-    if segmentType == "boss" then
+    if segmentType == "boss" or segmentType == "miniBoss" then
         return 0.18, 0.10, 0.26, 0.92
-    elseif segmentType == "miniBoss" then
-        return 0.16, 0.18, 0.10, 0.92
     end
     return 0.075, 0.086, 0.108, 0.92
 end
 
 function ADDON.GetSegmentTypeLabel(segmentType)
-    if segmentType == "boss" then
+    if segmentType == "boss" or segmentType == "miniBoss" then
         return "Boss Loot"
-    elseif segmentType == "miniBoss" then
-        return "Mini-Boss Loot"
     end
     return "Loot"
 end

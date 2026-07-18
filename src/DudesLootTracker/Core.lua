@@ -5,8 +5,8 @@ local DEFAULT_SETTINGS = {
     showMinimapButton = true,
     minimapAngle = 260,
     showAutomationDialogOnInstanceEnter = true,
+    hideLootChatMessages = false,
     autoOpenOnBossLoot = true,
-    autoOpenOnEliteLoot = true,
     autoOpenOnNormalLoot = false,
     persistOnlyBossSegments = false,
     maxLootEntries = 900,
@@ -35,8 +35,12 @@ local DEFAULT_SETTINGS = {
         },
         enemies = {
             boss = true,
-            miniBoss = true,
             normal = true,
+        },
+        areas = {
+            raid = true,
+            instance = true,
+            world = true,
         },
     },
 }

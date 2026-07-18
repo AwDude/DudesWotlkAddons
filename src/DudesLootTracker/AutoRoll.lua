@@ -6,11 +6,20 @@ local ROLL_TYPE_DISENCHANT = 3
 local ROLL_TYPE_PASS = 0
 local bindTooltip
 local PRIMORDIAL_SARONITE_ITEM_ID = 49908
+local pendingAutoConfirmRolls = {}
+local pendingRollItems = {}
+local registeredRollHook
+local handleConfirmLootRoll
 local ACTION_LABELS = {
     pass = "Passen",
     greed = "Gier",
     need = "Bedarf",
     disenchant = "Entzaubern",
+}
+local ROLL_ACTIONS = {
+    [ROLL_TYPE_NEED] = "need",
+    [ROLL_TYPE_GREED] = "greed",
+    [ROLL_TYPE_DISENCHANT] = "disenchant",
 }
 
 local function isLevel80InstanceOrRaid()
@@ -48,6 +57,14 @@ local function disenchantAvailable(rollId)
     return canDisenchant and true or false
 end
 
+local function greedAvailable(rollId)
+    if not GetLootRollItemInfo then
+        return true
+    end
+    local texture, name, count, quality, bindOnPickUp, canNeed, canGreed, canDisenchant = GetLootRollItemInfo(rollId)
+    return canGreed and true or false
+end
+
 local function isBindOnEquip(item)
     if not item or not item.link or not CreateFrame then
         return false
@@ -73,26 +90,55 @@ local function performRollAction(rollId, item, action)
     if not RollOnLoot or not action or action == "manual" then
         return false
     end
+    local rollType
+    local performedAction = action
     if action == "pass" then
-        RollOnLoot(rollId, ROLL_TYPE_PASS)
+        rollType = ROLL_TYPE_PASS
     elseif action == "greed" then
-        RollOnLoot(rollId, ROLL_TYPE_GREED)
+        rollType = ROLL_TYPE_GREED
     elseif action == "need" then
-        RollOnLoot(rollId, ROLL_TYPE_NEED)
+        rollType = ROLL_TYPE_NEED
     elseif action == "disenchant" then
         if disenchantAvailable(rollId) then
-            RollOnLoot(rollId, ROLL_TYPE_DISENCHANT)
+            rollType = ROLL_TYPE_DISENCHANT
+        elseif greedAvailable(rollId) then
+            rollType = ROLL_TYPE_GREED
+            performedAction = "greed"
         else
             return false
         end
     else
         return false
     end
-    if action ~= "pass" and ADDON.SetPendingLootDecision then
-        ADDON.SetPendingLootDecision(item, action)
+    if performedAction ~= "pass" then
+        pendingAutoConfirmRolls[rollId] = rollType
     end
-    ADDON.Print("Auto-" .. tostring(ACTION_LABELS[action] or action) .. " auf Loot: " .. (item.link or item.name or "Item"))
+    if performedAction ~= "pass" and ADDON.SetPendingLootDecision then
+        ADDON.SetPendingLootDecision(item, performedAction)
+    end
+    RollOnLoot(rollId, rollType)
+    if performedAction ~= "pass" then
+        handleConfirmLootRoll(rollId, rollType)
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0, function()
+                handleConfirmLootRoll(rollId, rollType)
+            end)
+        end
+    end
+    ADDON.Print("Auto-" .. tostring(ACTION_LABELS[performedAction] or performedAction) .. " auf Loot: " .. (item.link or item.name or "Item"))
     return true
+end
+
+handleConfirmLootRoll = function(rollId, rollType)
+    local expectedRollType = rollId and pendingAutoConfirmRolls[rollId]
+    if not expectedRollType or expectedRollType ~= rollType or not ConfirmLootRoll then
+        return
+    end
+    ConfirmLootRoll(rollId, rollType)
+    pendingAutoConfirmRolls[rollId] = nil
+    if StaticPopup_Hide then
+        StaticPopup_Hide("CONFIRM_LOOT_ROLL")
+    end
 end
 
 local function getAutomationAction(item)
@@ -121,6 +167,10 @@ local function handleStartLootRoll(rollId)
     local link = GetLootRollItemLink and GetLootRollItemLink(rollId)
     local item = link and ADDON.TrackRollLootItem and ADDON.TrackRollLootItem(link)
 
+    if rollId and item then
+        pendingRollItems[rollId] = item
+    end
+
     if not isLevel80InstanceOrRaid() or not item then
         return
     end
@@ -128,7 +178,19 @@ local function handleStartLootRoll(rollId)
     performRollAction(rollId, item, getAutomationAction(item))
 end
 
+local function handleRollOnLoot(rollId, rollType)
+    local action = ROLL_ACTIONS[rollType]
+    local item = rollId and pendingRollItems[rollId]
+    if item and action and ADDON.SetPendingLootDecision then
+        ADDON.SetPendingLootDecision(item, action)
+    end
+end
+
 function ADDON.InitializeAutoRoll()
+    if hooksecurefunc and RollOnLoot and not registeredRollHook then
+        hooksecurefunc("RollOnLoot", handleRollOnLoot)
+        registeredRollHook = true
+    end
     DudesUtils.EventHandler.Add("START_LOOT_ROLL", function(_, rollId)
         if C_Timer and C_Timer.After then
             C_Timer.After(0, function()
@@ -136,6 +198,15 @@ function ADDON.InitializeAutoRoll()
             end)
         else
             handleStartLootRoll(rollId)
+        end
+    end)
+    DudesUtils.EventHandler.Add("CONFIRM_LOOT_ROLL", function(_, rollId, rollType)
+        handleConfirmLootRoll(rollId, rollType)
+    end)
+    DudesUtils.EventHandler.Add("CANCEL_LOOT_ROLL", function(_, rollId)
+        if rollId then
+            pendingAutoConfirmRolls[rollId] = nil
+            pendingRollItems[rollId] = nil
         end
     end)
 end

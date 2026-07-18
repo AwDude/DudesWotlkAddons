@@ -4,6 +4,7 @@ local window
 local automationDialog
 local lootRows = {}
 local lootLayoutEntries = {}
+local collapsedLootAreas = {}
 local registeredSpecialFrame
 local focusedNumberBox
 local lootContentMinHeight = 1
@@ -14,10 +15,12 @@ local pendingLootViewportRefresh
 local isInstanceContext
 local requestLootViewportRefresh
 local renderLootLayoutEntry
+local getInstanceGroupKey
+local getAreaType
 local BORDER_R, BORDER_G, BORDER_B = 0.32, 0.38, 0.46
 local HOVER_R, HOVER_G, HOVER_B = 0.72, 0.86, 1
 local BOSS_TEXT_COLOR = "b82020"
-local MIN_WIDTH, MIN_HEIGHT = 820, 430
+local MIN_WIDTH, MIN_HEIGHT = 620, 340
 local TOP_TITLE_Y = -18
 local TITLE_CONTENT_GAP = 30
 local SCROLLBAR_BOTTOM_INSET = 16
@@ -39,6 +42,12 @@ local CONTROL_LABEL_GAP = 6
 local CHECKBOX_LABEL_GAP = 13
 local CONTROL_ROW_HEIGHT = 26
 local CARD_GAP = 6
+local AREA_HEADER_HEIGHT = 28
+local COLLAPSED_AREA_HEIGHT = 34
+local ENEMY_ROW_HEIGHT = 34
+local ITEM_ROW_HEIGHT = 34
+local LOOT_AREA_CONTENT_X = 24
+local LOOT_AREA_RIGHT_INSET = 12
 local PRIMORDIAL_SARONITE_LINK = "|cffa335ee|Hitem:49908:0:0:0:0:0:0:0:80|h[Urtümliches Saronit]|h|r"
 local AUTOMATION_ACTION_LABELS = {
     manual = "Manuell",
@@ -124,7 +133,7 @@ end
 local function createSectionTitle(parent, text)
     local title = createText(parent, 13)
     title:SetText(text)
-    title:SetTextColor(1, 0.82, 0.1)
+    title:SetTextColor(1, 1, 1)
     return title
 end
 
@@ -386,9 +395,21 @@ local function acquireLootRow(index)
     row.count:SetWidth(24)
     row.count:SetHeight(10)
     row.count:SetTextColor(1, 1, 1)
+    row.accent = row:CreateTexture(nil, "BACKGROUND")
+    row.accent:SetTexture("Interface\\Buttons\\WHITE8X8")
+    row.separator = row:CreateTexture(nil, "ARTWORK")
+    row.separator:SetTexture("Interface\\Buttons\\WHITE8X8")
+    row.separatorRight = row:CreateTexture(nil, "ARTWORK")
+    row.separatorRight:SetTexture("Interface\\Buttons\\WHITE8X8")
+    row.badge = createText(row, 8, "CENTER")
+    row.expandText = createText(row, 12, "CENTER")
     row.text = createText(row, 10)
     row.subtext = createText(row, 8)
     row.detail = createText(row, 9, "RIGHT")
+    row.itemHitbox = CreateFrame("Frame", nil, row)
+    row.itemHitbox:EnableMouse(true)
+    row.detailHitbox = CreateFrame("Frame", nil, row)
+    row.detailHitbox:EnableMouse(true)
     row:EnableMouse(true)
     row:SetScript("OnMouseDown", clearFocusedNumberBox)
     lootRows[index] = row
@@ -400,8 +421,43 @@ local function resetLootRow(row)
     if row.count then
         row.count:Hide()
     end
+    if row.text then
+        row.text:SetText("")
+        row.text:SetJustifyH("LEFT")
+    end
     if row.subtext then
         row.subtext:SetText("")
+        row.subtext:SetJustifyH("LEFT")
+    end
+    if row.detail then
+        row.detail:SetText("")
+        row.detail:SetJustifyH("RIGHT")
+    end
+    if row.itemHitbox then
+        row.itemHitbox:Hide()
+        row.itemHitbox:SetScript("OnEnter", nil)
+        row.itemHitbox:SetScript("OnLeave", nil)
+        row.itemHitbox:SetScript("OnMouseUp", nil)
+    end
+    if row.detailHitbox then
+        row.detailHitbox:Hide()
+        row.detailHitbox:SetScript("OnEnter", nil)
+        row.detailHitbox:SetScript("OnLeave", nil)
+    end
+    if row.accent then
+        row.accent:Hide()
+    end
+    if row.separator then
+        row.separator:Hide()
+    end
+    if row.separatorRight then
+        row.separatorRight:Hide()
+    end
+    if row.badge then
+        row.badge:Hide()
+    end
+    if row.expandText then
+        row.expandText:Hide()
     end
     row:SetScript("OnEnter", nil)
     row:SetScript("OnLeave", nil)
@@ -431,6 +487,7 @@ local function rowPassesFilters(item, segment)
     local filters = ADDON.GetFilters()
     filters.qualities = filters.qualities or {}
     filters.enemies = filters.enemies or {}
+    filters.areas = filters.areas or { raid = true, instance = true, world = true }
 
     if filters.ownOnly then
         local player = ADDON.GetPlayerName()
@@ -452,7 +509,11 @@ local function rowPassesFilters(item, segment)
     if not filters.qualities[getQualityKey(item.quality)] then
         return false
     end
-    if not filters.enemies[segment.type or "normal"] then
+    local enemyType = (segment.type == "boss" or segment.type == "miniBoss") and "boss" or "normal"
+    if not filters.enemies[enemyType] then
+        return false
+    end
+    if not filters.areas[getAreaType(segment)] then
         return false
     end
 
@@ -476,40 +537,183 @@ end
 local function formatRecipients(item)
     local parts = {}
     for _, recipient in ipairs(item.recipients or {}) do
-        local method = recipient.method
-        local methodLabel
-        if method == "trade" then
-            methodLabel = "Handel"
-        elseif method == "master" then
-            methodLabel = "zugeteilt"
-        elseif method == "manual" then
-            methodLabel = "manuell"
-        elseif method == "need" then
-            methodLabel = "Bedarf"
-        elseif method == "greed" then
-            methodLabel = "Gier"
-        elseif method == "disenchant" then
-            methodLabel = "Entzaubern"
-        elseif method == "loot" then
-            methodLabel = "gelootet"
-        end
-        if methodLabel then
-            local timeText = recipient.timestamp and (" " .. ADDON.FormatTime(recipient.timestamp)) or ""
-            table.insert(parts, tostring(recipient.name or "?") .. " (" .. methodLabel .. timeText .. ")")
-        else
-            table.insert(parts, recipient.name or "?")
+        table.insert(parts, recipient.name or "?")
+    end
+    return table.concat(parts, ", ")
+end
+
+local function formatLootTimestamp(timestamp)
+    if timestamp and date then
+        return date("%d.%m. %H:%M", timestamp)
+    end
+    return ""
+end
+
+local function formatLootMethod(method)
+    local labels = {
+        trade = "gehandelt",
+        master = "zugewiesen",
+        greed = "Mit Gier gewonnen",
+        need = "Mit Bedarf gewonnen",
+        disenchant = "Mit Entzaubern gewonnen",
+        loot = "geplündert",
+        manual = "manuell",
+    }
+    return labels[method] or method or ""
+end
+
+local function formatOwnership(item)
+    if item and item.blizzardRollStarted and #(item.recipients or {}) == 0 then
+        return "wird verwürfelt"
+    end
+    local recipients = formatRecipients(item)
+    if recipients ~= "" then
+        return recipients
+    end
+    return "Unvergeben"
+end
+
+local function formatLootMethodDetail(item)
+    if item and item.blizzardRollStarted and #(item.recipients or {}) == 0 then
+        return item.rollMethod and formatLootMethod(item.rollMethod) or ""
+    end
+    local parts = {}
+    for _, recipient in ipairs(item.recipients or {}) do
+        local method = formatLootMethod(recipient.method)
+        if method ~= "" then
+            table.insert(parts, method)
         end
     end
     return table.concat(parts, ", ")
 end
 
-local function formatOwnership(item)
-    local recipients = formatRecipients(item)
-    if recipients ~= "" then
-        return recipients
+local function formatLootTimestampDetail(item)
+    local parts = {}
+    for _, recipient in ipairs(item.recipients or {}) do
+        local timestamp = formatLootTimestamp(recipient.timestamp)
+        if timestamp ~= "" then
+            local method = formatLootMethod(recipient.method)
+            if method ~= "" then
+                table.insert(parts, method .. " " .. timestamp)
+            else
+                table.insert(parts, timestamp)
+            end
+        end
     end
-    return "unverteilt"
+    return table.concat(parts, "\n")
 end
+
+local function isDisenchantRoll(item)
+    if not item then
+        return false
+    end
+    if item.rollMethod == "disenchant" then
+        return true
+    end
+    for _, recipient in ipairs(item.recipients or {}) do
+        if recipient.method == "disenchant" then
+            return true
+        end
+    end
+    return false
+end
+
+local function formatDisenchantRewardDetails(item)
+    if not item or not item.disenchantRewards or #item.disenchantRewards == 0 then
+        return {}
+    end
+    local rewards = {}
+    local order = {}
+    for _, rewardLink in ipairs(item.disenchantRewards) do
+        local itemId = ADDON.GetItemId(rewardLink) or tostring(rewardLink or "")
+        local reward = rewards[itemId]
+        if not reward then
+            reward = {
+                link = rewardLink,
+                count = 0,
+            }
+            rewards[itemId] = reward
+            table.insert(order, itemId)
+        end
+        reward.count = reward.count + 1
+    end
+    local lines = {}
+    for _, itemId in ipairs(order) do
+        local reward = rewards[itemId]
+        local countText = reward.count > 1 and (" x" .. tostring(reward.count)) or ""
+        table.insert(lines, tostring(reward.link or "?") .. countText)
+    end
+    return lines
+end
+
+local function normalizeEquipmentType(subType, slot)
+    local value = subType or ""
+    local lower = string.lower(value)
+    local normalizedTypes = {
+        ["zweihandschwerter"] = "Zweihandschwert",
+        ["two-handed swords"] = "Zweihandschwert",
+        ["einhandschwerter"] = "Schwert",
+        ["one-handed swords"] = "Schwert",
+        ["schwerter"] = "Schwert",
+        ["swords"] = "Schwert",
+        ["zweihandäxte"] = "Zweihandaxt",
+        ["two-handed axes"] = "Zweihandaxt",
+        ["einhändige äxte"] = "Axt",
+        ["one-handed axes"] = "Axt",
+        ["äxte"] = "Axt",
+        ["axes"] = "Axt",
+        ["zweihandstreitkolben"] = "Zweihandstreitkolben",
+        ["two-handed maces"] = "Zweihandstreitkolben",
+        ["einhändige streitkolben"] = "Streitkolben",
+        ["one-handed maces"] = "Streitkolben",
+        ["streitkolben"] = "Streitkolben",
+        ["maces"] = "Streitkolben",
+        ["dolche"] = "Dolch",
+        ["daggers"] = "Dolch",
+        ["stäbe"] = "Stab",
+        ["staves"] = "Stab",
+        ["stangenwaffen"] = "Stangenwaffe",
+        ["polearms"] = "Stangenwaffe",
+        ["schusswaffen"] = "Schusswaffe",
+        ["guns"] = "Schusswaffe",
+        ["bögen"] = "Bogen",
+        ["bows"] = "Bogen",
+        ["armbrüste"] = "Armbrust",
+        ["crossbows"] = "Armbrust",
+        ["wurfwaffen"] = "Wurfwaffe",
+        ["thrown"] = "Wurfwaffe",
+        ["faustwaffen"] = "Faustwaffe",
+        ["fist weapons"] = "Faustwaffe",
+        ["schilde"] = "Schild",
+        ["shields"] = "Schild",
+        ["stoff"] = "Stoff",
+        ["cloth"] = "Stoff",
+        ["leder"] = "Leder",
+        ["leather"] = "Leder",
+        ["schwere rüstung"] = "Schwere Rüstung",
+        ["mail"] = "Schwere Rüstung",
+        ["platte"] = "Platte",
+        ["plate"] = "Platte",
+    }
+    if normalizedTypes[lower] then
+        return normalizedTypes[lower]
+    end
+    if value ~= "" then
+        return value
+    end
+    return slot or ""
+end
+
+local ARMOR_TYPES = {
+    ["stoff"] = true,
+    ["cloth"] = true,
+    ["leder"] = true,
+    ["leather"] = true,
+    ["schwere rüstung"] = true,
+    ["mail"] = true,
+    ["platte"] = true,
+    ["plate"] = true,
+}
 
 local function formatItemInfo(item)
     local parts = {}
@@ -518,13 +722,12 @@ local function formatItemInfo(item)
     local lowerSubType = string.lower(subType)
     local isGenericSubType = lowerSubType == "verschiedenes" or lowerSubType == "miscellaneous" or lowerSubType == "misc"
     if item.isEquipment then
-        if subType ~= "" and slot ~= "" and subType ~= slot and not isGenericSubType then
-            table.insert(parts, subType)
-            table.insert(parts, slot)
-        elseif slot ~= "" then
-            table.insert(parts, slot)
-        elseif subType ~= "" and not isGenericSubType then
-            table.insert(parts, subType)
+        local equipmentType = not isGenericSubType and normalizeEquipmentType(subType, slot) or slot
+        if not isGenericSubType and ARMOR_TYPES[lowerSubType] and slot ~= "" and slot ~= equipmentType then
+            equipmentType = equipmentType .. " " .. slot
+        end
+        if equipmentType ~= "" then
+            table.insert(parts, equipmentType)
         end
     elseif subType ~= "" and not isGenericSubType then
         table.insert(parts, subType)
@@ -541,37 +744,167 @@ local function formatItemInfo(item)
 end
 
 local function formatItemDetail(item)
-    return formatOwnership(item)
+    local owner = formatOwnership(item)
+    local method = formatLootMethodDetail(item)
+    if method ~= "" then
+        return owner .. "\n" .. method
+    end
+    return owner
 end
 
-local function setupItemTooltip(row, item)
-    row:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+local function measureMultilineTextWidth(fontString, text)
+    if not fontString or not fontString.GetStringWidth or not fontString.SetText then
+        return 0
+    end
+    local maxWidth = 0
+    text = tostring(text or "")
+    for line in string.gmatch(text .. "\n", "([^\n]*)\n") do
+        fontString:SetText(line)
+        local width = fontString:GetStringWidth() or 0
+        if width > maxWidth then
+            maxWidth = width
+        end
+    end
+    fontString:SetText(text)
+    return maxWidth
+end
+
+local function getSegmentEnemyType(segment)
+    if segment and (segment.type == "boss" or segment.type == "miniBoss") then
+        return "boss"
+    end
+    return "normal"
+end
+
+getAreaType = function(segment)
+    local size = tonumber(segment and segment.raidSize or 0) or 0
+    if size > 5 then
+        return "raid"
+    elseif size == 5 then
+        return "instance"
+    end
+    return "world"
+end
+
+local function getAreaAccent(areaType)
+    if areaType == "raid" then
+        return 0.48, 0.26, 0.76
+    elseif areaType == "instance" then
+        return 0.20, 0.46, 0.78
+    end
+    return 0.38, 0.42, 0.48
+end
+
+local function getAreaTitle(segment)
+    if not segment or not segment.raid or segment.raid == "" or segment.raid == "World" then
+        return "Au\195\159erhalb"
+    end
+    return tostring(segment.raid)
+end
+
+local function getInstanceIdText(segment)
+    if not segment or not segment.raid or segment.raid == "" or segment.raid == "World" then
+        return ""
+    end
+    local size = tonumber(segment.raidSize or 0) or 0
+    if size <= 0 or segment.instanceType == "none" then
+        return ""
+    end
+    local raidId = segment.raidId
+    if not raidId and segment.raidKey then
+        raidId = string.match(segment.raidKey, ":([^:]+)$")
+    end
+    if not raidId or tostring(raidId) == "" or tostring(raidId) == "unsaved" then
+        return ""
+    end
+    return tostring(raidId)
+end
+
+local function formatAreaSize(segment)
+    local size = tonumber(segment and segment.raidSize or 0) or 0
+    if size > 0 and segment and segment.instanceType ~= "none" then
+        return tostring(size)
+    end
+    return ""
+end
+
+local function getAreaStableKey(segment)
+    local key = getInstanceGroupKey(segment)
+    return tostring(key or "outside")
+end
+
+local function getEnemyStableKey(segment)
+    return getAreaStableKey(segment) .. ":" .. tostring(segment and segment.id or segment and segment.sourceName or "")
+end
+
+local function isAreaExpanded(area)
+    local value = collapsedLootAreas[area.key]
+    if value == nil then
+        return true
+    end
+    return not value
+end
+
+local function setAllLootExpanded(expanded)
+    for _, entry in ipairs(lootLayoutEntries or {}) do
+        if entry.kind == "area" and entry.area then
+            collapsedLootAreas[entry.area.key] = not expanded
+        end
+    end
+    ADDON.RefreshMainWindow()
+end
+
+local function toggleAllLootExpanded()
+    local anyExpanded
+    for _, entry in ipairs(lootLayoutEntries or {}) do
+        if entry.kind == "area" and entry.area and isAreaExpanded(entry.area) then
+            anyExpanded = true
+            break
+        end
+    end
+    setAllLootExpanded(not anyExpanded)
+end
+
+local function setupItemTooltip(frame, item)
+    frame:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
         if item.link then
             GameTooltip:SetHyperlink(item.link)
         else
             GameTooltip:AddLine(item.name or "Item")
         end
-        if item.disenchantRewards and #item.disenchantRewards > 0 then
-            GameTooltip:AddLine(" ")
-            GameTooltip:AddLine("Entzaubert zu:", 1, 0.82, 0.1)
-            for _, rewardLink in ipairs(item.disenchantRewards) do
-                GameTooltip:AddLine(rewardLink, 1, 1, 1)
-            end
-        end
         GameTooltip:Show()
     end)
-    row:SetScript("OnLeave", function()
+    frame:SetScript("OnLeave", function()
         GameTooltip:Hide()
     end)
 end
 
-local function setupItemClick(row, item)
-    row:SetScript("OnMouseUp", function(_, button)
-        if button == "LeftButton" then
-            item.expanded = not item.expanded
-            ADDON.RefreshMainWindow()
+local function setupLootTimestampTooltip(frame, item)
+    local timestampText = formatLootTimestampDetail(item)
+    local rewardLines = isDisenchantRoll(item) and formatDisenchantRewardDetails(item) or {}
+    if timestampText == "" and #rewardLines == 0 then
+        return
+    end
+    frame:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+        for line in string.gmatch(timestampText .. "\n", "([^\n]*)\n") do
+            if line ~= "" then
+                GameTooltip:AddLine(line, 0.78, 0.82, 0.88)
+            end
         end
+        if #rewardLines > 0 then
+            if timestampText ~= "" then
+                GameTooltip:AddLine(" ")
+            end
+            for _, rewardLine in ipairs(rewardLines) do
+                GameTooltip:AddLine(rewardLine, 0.78, 0.82, 0.88)
+            end
+        end
+        GameTooltip:Show()
+    end)
+    frame:SetScript("OnLeave", function()
+        GameTooltip:Hide()
     end)
 end
 
@@ -604,120 +937,141 @@ local function formatInstanceId(segment)
     return "ID " .. tostring(raidId)
 end
 
-local function getInstanceGroupKey(segment)
+getInstanceGroupKey = function(segment)
     if not segment or not segment.raid or segment.raid == "" or segment.raid == "World" then
         return "outside"
     end
     return segment.raidKey or (tostring(segment.raid) .. ":" .. tostring(segment.raidSize or ""))
 end
 
-local function toggleInstanceItemDetails(segment)
-    local targetKey = getInstanceGroupKey(segment)
-    local anyCollapsed
-    for _, groupedSegment in ipairs(ADDON.GetCharacterDB().segments or {}) do
-        if getInstanceGroupKey(groupedSegment) == targetKey then
-            for _, item in ipairs(groupedSegment.items or {}) do
-                if item.disenchantRewards and #item.disenchantRewards > 0 then
-                    if not item.expanded then
-                        anyCollapsed = true
-                        break
-                    end
-                end
-            end
-        end
-        if anyCollapsed then
-            break
-        end
-    end
-    local expand = anyCollapsed and true or false
-    for _, groupedSegment in ipairs(ADDON.GetCharacterDB().segments or {}) do
-        if getInstanceGroupKey(groupedSegment) == targetKey then
-            for _, item in ipairs(groupedSegment.items or {}) do
-                if item.disenchantRewards and #item.disenchantRewards > 0 then
-                    item.expanded = expand
-                end
-            end
-        end
-    end
-    ADDON.RefreshMainWindow()
-end
-
-local function addInstanceHeader(index, segment, y)
-    if not isLootRowInViewport(y, 30) then
-        return y - 34, index
+local function addAreaHeader(index, area, y)
+    local height = area.layoutHeight or AREA_HEADER_HEIGHT
+    if not isLootRowInViewport(y, height) then
+        return y - height, index
     end
     local row = acquireLootRow(index)
     resetLootRow(row)
     row:SetPoint("TOPLEFT", window.lootContent, "TOPLEFT", 4, y)
     row:SetPoint("RIGHT", window.lootContent, "RIGHT", -4, 0)
-    row:SetHeight(30)
-    setBackdrop(row, 0.028, 0.035, 0.048, 0.98)
+    row:SetHeight(height)
+    row:SetFrameLevel((window.lootContent:GetFrameLevel() or 0) + 1)
+    local r, g, b = getAreaAccent(area.areaType)
+    setBackdrop(row, 0.032 + r * 0.05, 0.038 + g * 0.05, 0.052 + b * 0.05, 0.98)
+    row:SetBackdropBorderColor(r, g, b, 0.95)
+    row.subtext:ClearAllPoints()
+    row.subtext:SetPoint("TOPRIGHT", row, "TOPRIGHT", -LOOT_AREA_RIGHT_INSET, isAreaExpanded(area) and -10 or -8)
+    row.subtext:SetHeight(18)
+    row.subtext:SetFont(STANDARD_TEXT_FONT, 9, "")
+    row.subtext:SetTextColor(0.78, 0.82, 0.88)
+    row.subtext:SetJustifyH("RIGHT")
+    if row.subtext.SetWordWrap then
+        row.subtext:SetWordWrap(false)
+    end
+    if row.subtext.SetNonSpaceWrap then
+        row.subtext:SetNonSpaceWrap(false)
+    end
+    local meta = area.sizeText or ""
+    if meta ~= "" and area.instanceId and area.instanceId ~= "" then
+        meta = meta .. " Spieler (ID: " .. area.instanceId .. ")"
+    elseif meta ~= "" then
+        meta = meta .. " Spieler"
+    else
+        meta = ""
+    end
+    row.subtext:SetText(meta)
+    local metaWidth = 0
+    if meta ~= "" then
+        metaWidth = math.min(220, math.max(54, measureMultilineTextWidth(row.subtext, meta) + 8))
+    end
+    row.subtext:SetWidth(metaWidth)
     row.text:ClearAllPoints()
-    row.text:SetPoint("LEFT", row, "LEFT", 10, 0)
-    row.text:SetPoint("RIGHT", row, "RIGHT", -88, 0)
-    row.text:SetFont(STANDARD_TEXT_FONT, 13, "")
-    row.text:SetTextColor(1, 0.82, 0.1)
-    row.text:SetText(formatInstanceLabel(segment))
-    row.detail:ClearAllPoints()
-    row.detail:SetPoint("RIGHT", row, "RIGHT", -10, 0)
-    row.detail:SetWidth(72)
-    row.detail:SetHeight(16)
-    row.detail:SetFont(STANDARD_TEXT_FONT, 8, "")
-    row.detail:SetTextColor(0.78, 0.82, 0.88)
-    row.detail:SetText(formatInstanceId(segment))
+    row.text:SetPoint("TOPLEFT", row, "TOPLEFT", LOOT_AREA_CONTENT_X, isAreaExpanded(area) and -10 or -8)
+    if meta ~= "" then
+        row.text:SetPoint("RIGHT", row.subtext, "LEFT", -12, 0)
+    else
+        row.text:SetPoint("RIGHT", row, "RIGHT", -LOOT_AREA_RIGHT_INSET, 0)
+    end
+    row.text:SetHeight(18)
+    row.text:SetFont(STANDARD_TEXT_FONT, 12, "")
+    if row.text.SetWordWrap then
+        row.text:SetWordWrap(false)
+    end
+    if row.text.SetNonSpaceWrap then
+        row.text:SetNonSpaceWrap(false)
+    end
+    row.text:SetText("|cffffffff" .. tostring(area.title or "?") .. "|r")
     row:SetScript("OnMouseUp", function(_, button)
         if button == "LeftButton" then
-            toggleInstanceItemDetails(segment)
+            collapsedLootAreas[area.key] = isAreaExpanded(area)
+            ADDON.RefreshMainWindow()
         end
     end)
-    rememberLootRow(row, y, 30)
-    return y - 34, index + 1
+    rememberLootRow(row, y, height)
+    return y - height, index + 1
 end
 
-local function addSegmentHeader(index, segment, y)
-    if not isLootRowInViewport(y, 30) then
-        return y - 34, index
+local function addEnemyRow(index, enemy, y)
+    local height = enemy.layoutHeight or ENEMY_ROW_HEIGHT
+    if not isLootRowInViewport(y, height) then
+        return y - height, index
     end
     local row = acquireLootRow(index)
     resetLootRow(row)
-    row:SetPoint("TOPLEFT", window.lootContent, "TOPLEFT", 16, y)
-    row:SetPoint("RIGHT", window.lootContent, "RIGHT", -8, 0)
-    row:SetHeight(30)
-    local r, g, b, a = ADDON.GetSegmentColor(segment.type)
-    setBackdrop(row, r, g, b, a)
-    local title = tostring(segment.sourceName or segment.raid or "")
-    if title == "" then
-        title = segment.type == "boss" and "Boss" or (segment.type == "miniBoss" and "Elite" or "Normal")
-    end
-    local dateText, timeText = formatSegmentDateTime(segment.timestamp)
+    row:SetPoint("TOPLEFT", window.lootContent, "TOPLEFT", 4, y)
+    row:SetPoint("RIGHT", window.lootContent, "RIGHT", -12, 0)
+    row:SetHeight(height)
+    row:SetFrameLevel((window.lootContent:GetFrameLevel() or 0) + 2)
+    setBackdrop(row, 0.035, 0.041, 0.052, 0)
+    row:SetBackdropBorderColor(0.18, 0.21, 0.28, 0)
     row.text:ClearAllPoints()
-    row.text:SetPoint("LEFT", row, "LEFT", 10, 0)
-    row.text:SetPoint("RIGHT", row, "RIGHT", -108, 0)
-    row.text:SetFont(STANDARD_TEXT_FONT, 11, "")
-    row.text:SetText("|cffffffff" .. title .. "|r")
-    row.detail:ClearAllPoints()
-    row.detail:SetPoint("RIGHT", row, "RIGHT", -8, 0)
-    row.detail:SetWidth(92)
-    row.detail:SetHeight(28)
-    row.detail:SetFont(STANDARD_TEXT_FONT, 8, "")
-    row.detail:SetTextColor(0.78, 0.82, 0.88)
-    row.detail:SetText(timeText .. "\n" .. dateText)
-    rememberLootRow(row, y, 30)
-    return y - 34, index + 1
+    row.text:SetPoint("TOP", row, "TOP", 0, -9)
+    row.text:SetHeight(18)
+    row.text:SetFont(STANDARD_TEXT_FONT, 10, "")
+    row.text:SetJustifyH("CENTER")
+    row.text:SetText("|cffffffff" .. tostring(enemy.title or "?") .. "|r")
+    local textWidth = row.text.GetStringWidth and (row.text:GetStringWidth() or 0) or 120
+    local labelWidth = math.max(90, textWidth + 14)
+    row.text:SetWidth(labelWidth)
+    if row.separator and row.separatorRight then
+        local r, g, b = getAreaAccent(enemy.areaType)
+        local rowWidth = row:GetWidth() or 600
+        local labelHalfWidth = labelWidth / 2
+        local centerX = rowWidth / 2
+        local leftEndX = centerX - labelHalfWidth - 6
+        local rightStartX = centerX + labelHalfWidth + 6
+        local lineY = -18
+        row.separator:Show()
+        row.separator:ClearAllPoints()
+        row.separator:SetPoint("TOPLEFT", row, "TOPLEFT", LOOT_AREA_CONTENT_X, lineY)
+        row.separator:SetPoint("TOPRIGHT", row, "TOPLEFT", leftEndX, lineY)
+        row.separator:SetHeight(1)
+        row.separator:SetVertexColor(r, g, b, 0.85)
+        row.separatorRight:Show()
+        row.separatorRight:ClearAllPoints()
+        row.separatorRight:SetPoint("TOPLEFT", row, "TOPLEFT", rightStartX, lineY)
+        row.separatorRight:SetPoint("TOPRIGHT", row, "TOPRIGHT", -LOOT_AREA_RIGHT_INSET, lineY)
+        row.separatorRight:SetHeight(1)
+        row.separatorRight:SetVertexColor(r, g, b, 0.85)
+    end
+    rememberLootRow(row, y, height)
+    return y - height, index + 1
 end
 
 local function addItemRow(index, item, y)
-    if not isLootRowInViewport(y, 36) then
-        return y - 40, index
+    if not isLootRowInViewport(y, ITEM_ROW_HEIGHT) then
+        return y - ITEM_ROW_HEIGHT, index
     end
     local row = acquireLootRow(index)
     resetLootRow(row)
-    row:SetPoint("TOPLEFT", window.lootContent, "TOPLEFT", 32, y)
-    row:SetPoint("RIGHT", window.lootContent, "RIGHT", -12, 0)
-    row:SetHeight(36)
+    row:SetPoint("TOPLEFT", window.lootContent, "TOPLEFT", 4, y)
+    row:SetPoint("RIGHT", window.lootContent, "RIGHT", -16, 0)
+    row:SetHeight(ITEM_ROW_HEIGHT)
+    row:SetFrameLevel((window.lootContent:GetFrameLevel() or 0) + 3)
     row.icon:Show()
-    row.icon:SetWidth(26)
-    row.icon:SetHeight(26)
+    row.icon:SetWidth(30)
+    row.icon:SetHeight(30)
+    row.icon:ClearAllPoints()
+    row.icon:SetPoint("LEFT", row, "LEFT", LOOT_AREA_CONTENT_X, 0)
     row.icon:SetTexture(item.texture or "Interface\\Icons\\INV_Misc_QuestionMark")
     local count = tonumber(item.count or 1) or 1
     if row.count then
@@ -728,30 +1082,58 @@ local function addItemRow(index, item, y)
             row.count:Hide()
         end
     end
-    setBackdrop(row, 0.055, 0.065, 0.08, 0.95)
+    setBackdrop(row, 0.044, 0.052, 0.066, 0)
+    row:SetBackdropBorderColor(0.18, 0.21, 0.28, 0)
+    row.detail:ClearAllPoints()
+    row.detail:SetPoint("TOPRIGHT", row, "TOPRIGHT", -LOOT_AREA_RIGHT_INSET, -2)
+    row.detail:SetHeight(30)
+    row.detail:SetFont(STANDARD_TEXT_FONT, 8, "")
+    row.detail:SetJustifyH("RIGHT")
+    row.detail:SetTextColor(0.78, 0.82, 0.88)
+    if row.detail.SetWordWrap then
+        row.detail:SetWordWrap(false)
+    end
+    if row.detail.SetNonSpaceWrap then
+        row.detail:SetNonSpaceWrap(false)
+    end
+    local detailText = formatItemDetail(item)
+    row.detail:SetText(detailText)
+    local measuredDetailWidth = measureMultilineTextWidth(row.detail, detailText)
+    local maxDetailWidth = math.max(90, math.min(180, math.floor((row:GetWidth() or 520) * 0.42)))
+    row.detail:SetWidth(math.min(maxDetailWidth, math.max(70, measuredDetailWidth + 12)))
     row.text:ClearAllPoints()
-    row.text:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 7, -1)
-    row.text:SetPoint("RIGHT", row, "RIGHT", -280, 0)
+    row.text:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 6, -1)
+    row.text:SetPoint("RIGHT", row.detail, "LEFT", -12, 0)
     row.text:SetHeight(14)
-    row.text:SetFont(STANDARD_TEXT_FONT, 10, "")
+    row.text:SetFont(STANDARD_TEXT_FONT, 11, "")
+    row.text:SetJustifyH("LEFT")
     row.subtext:ClearAllPoints()
     row.subtext:SetPoint("TOPLEFT", row.text, "BOTTOMLEFT", 0, -1)
     row.subtext:SetPoint("RIGHT", row.text, "RIGHT", 0, 0)
-    row.subtext:SetHeight(12)
-    row.subtext:SetFont(STANDARD_TEXT_FONT, 8, "")
-    row.subtext:SetTextColor(0.72, 0.76, 0.84)
-    row.detail:ClearAllPoints()
-    row.detail:SetPoint("RIGHT", row, "RIGHT", -8, 0)
-    row.detail:SetWidth(268)
-    row.detail:SetHeight(32)
-    row.detail:SetFont(STANDARD_TEXT_FONT, 8, "")
+    row.subtext:SetHeight(13)
+    row.subtext:SetFont(STANDARD_TEXT_FONT, 9, "")
+    row.subtext:SetJustifyH("LEFT")
+    row.subtext:SetTextColor(0.78, 0.82, 0.88)
     row.text:SetText("|cff" .. ADDON.GetQualityColor(item.quality) .. tostring(item.name or "?") .. "|r")
     row.subtext:SetText(formatItemInfo(item))
-    row.detail:SetText(formatItemDetail(item))
-    setupItemTooltip(row, item)
-    setupItemClick(row, item)
-    rememberLootRow(row, y, 36)
-    return y - 40, index + 1
+    if row.itemHitbox then
+        row.itemHitbox:Show()
+        row.itemHitbox:SetFrameLevel(row:GetFrameLevel() + 2)
+        row.itemHitbox:ClearAllPoints()
+        row.itemHitbox:SetPoint("TOPLEFT", row, "TOPLEFT", LOOT_AREA_CONTENT_X, 0)
+        row.itemHitbox:SetPoint("BOTTOMRIGHT", row.text, "BOTTOMRIGHT", 0, -14)
+        setupItemTooltip(row.itemHitbox, item)
+    end
+    if row.detailHitbox then
+        row.detailHitbox:Show()
+        row.detailHitbox:SetFrameLevel(row:GetFrameLevel() + 2)
+        row.detailHitbox:ClearAllPoints()
+        row.detailHitbox:SetPoint("TOPLEFT", row.detail, "TOPLEFT", 0, 0)
+        row.detailHitbox:SetPoint("BOTTOMRIGHT", row.detail, "BOTTOMRIGHT", 0, 0)
+        setupLootTimestampTooltip(row.detailHitbox, item)
+    end
+    rememberLootRow(row, y, ITEM_ROW_HEIGHT)
+    return y - ITEM_ROW_HEIGHT, index + 1
 end
 
 local function addDetailRow(index, y, text, detail)
@@ -763,6 +1145,7 @@ local function addDetailRow(index, y, text, detail)
     row:SetPoint("TOPLEFT", window.lootContent, "TOPLEFT", 58, y)
     row:SetPoint("RIGHT", window.lootContent, "RIGHT", -18, 0)
     row:SetHeight(21)
+    row:SetFrameLevel((window.lootContent:GetFrameLevel() or 0) + 3)
     setBackdrop(row, 0.038, 0.044, 0.056, 0.96)
     row.text:ClearAllPoints()
     row.text:SetPoint("LEFT", row, "LEFT", 8, 0)
@@ -789,31 +1172,75 @@ local function appendLootLayoutEntry(kind, y, height, payload)
     table.insert(lootLayoutEntries, entry)
 end
 
-local function appendExpandedItemLayout(item, y)
-    if not item.expanded then
-        return y
-    end
-    if item.disenchantRewards and #item.disenchantRewards > 0 then
-        appendLootLayoutEntry("detail", y, 21, { text = "|cffffd200Entzaubert zu|r", detail = "" })
-        y = y - 23
-        for _, rewardLink in ipairs(item.disenchantRewards) do
-            appendLootLayoutEntry("detail", y, 21, { text = rewardLink, detail = "" })
-            y = y - 23
-        end
-    end
-    return y
-end
-
 function renderLootLayoutEntry(index, entry)
-    if entry.kind == "instance" then
-        addInstanceHeader(index, entry.segment, entry.y)
-    elseif entry.kind == "segment" then
-        addSegmentHeader(index, entry.segment, entry.y)
+    if entry.kind == "area" then
+        addAreaHeader(index, entry.area, entry.y)
+    elseif entry.kind == "enemy" then
+        addEnemyRow(index, entry.enemy, entry.y)
     elseif entry.kind == "item" then
         addItemRow(index, entry.item, entry.y)
     elseif entry.kind == "detail" then
         addDetailRow(index, entry.y, entry.text, entry.detail)
     end
+end
+
+local function buildLootAreas(segments, maxVisibleItems)
+    local areas = {}
+    local areaOrder = {}
+    local visibleItemCount = 0
+
+    for i = #(segments or {}), 1, -1 do
+        if maxVisibleItems > 0 and visibleItemCount >= maxVisibleItems then
+            break
+        end
+        local segment = segments[i]
+        local visibleItems = {}
+        for _, item in ipairs(segment.items or {}) do
+            if maxVisibleItems > 0 and visibleItemCount >= maxVisibleItems then
+                break
+            end
+            if not item.infoReady then
+                ADDON.RefreshItemInfo(item)
+            end
+            if rowPassesFilters(item, segment) then
+                table.insert(visibleItems, item)
+                visibleItemCount = visibleItemCount + 1
+            end
+        end
+
+        if #visibleItems > 0 then
+            local areaKey = getAreaStableKey(segment)
+            local area = areas[areaKey]
+            if not area then
+                local areaType = getAreaType(segment)
+                area = {
+                    key = areaKey,
+                    title = getAreaTitle(segment),
+                    areaType = areaType,
+                    instanceId = getInstanceIdText(segment),
+                    sizeText = formatAreaSize(segment),
+                    enemies = {},
+                }
+                areas[areaKey] = area
+                table.insert(areaOrder, area)
+            end
+
+            local title = tostring(segment.sourceName or "")
+            if title == "" then
+                title = getSegmentEnemyType(segment) == "boss" and "Boss" or "Normal"
+            end
+            local enemy = {
+                key = getEnemyStableKey(segment),
+                title = title,
+                segment = segment,
+                areaType = area.areaType,
+                items = visibleItems,
+            }
+            table.insert(area.enemies, enemy)
+        end
+    end
+
+    return areaOrder
 end
 
 local function refreshLootContent()
@@ -824,49 +1251,35 @@ local function refreshLootContent()
     lootLayoutEntries = {}
     local y = -4
     local segments = ADDON.GetCharacterDB().segments or {}
-    local lastInstanceKey
     local settings = ADDON.GetSettings()
     local maxVisibleItems = tonumber(settings.maxLootEntries or 0) or 0
-    local visibleItemCount = 0
-    for i = #segments, 1, -1 do
-        if maxVisibleItems > 0 and visibleItemCount >= maxVisibleItems then
-            break
+    local areas = buildLootAreas(segments, maxVisibleItems)
+
+    for _, area in ipairs(areas) do
+        local areaHeight = AREA_HEADER_HEIGHT
+        if isAreaExpanded(area) then
+            for _, enemy in ipairs(area.enemies or {}) do
+                local enemyHeight = ENEMY_ROW_HEIGHT + (#(enemy.items or {}) * ITEM_ROW_HEIGHT)
+                enemy.layoutHeight = enemyHeight
+                areaHeight = areaHeight + enemyHeight
+            end
+        else
+            areaHeight = COLLAPSED_AREA_HEIGHT
         end
-        local segment = segments[i]
-        local anyVisible
-        for _, item in ipairs(segment.items or {}) do
-            if maxVisibleItems > 0 and visibleItemCount >= maxVisibleItems then
-                break
-            end
-            if not item.infoReady then
-                ADDON.RefreshItemInfo(item)
-            end
-            if rowPassesFilters(item, segment) then
-                anyVisible = true
-                break
-            end
-        end
-        if anyVisible then
-            local instanceKey = getInstanceGroupKey(segment)
-            if instanceKey ~= lastInstanceKey then
-                appendLootLayoutEntry("instance", y, 30, { segment = segment })
-                y = y - 34
-                lastInstanceKey = instanceKey
-            end
-            appendLootLayoutEntry("segment", y, 30, { segment = segment })
-            y = y - 34
-            for _, item in ipairs(segment.items or {}) do
-                if maxVisibleItems > 0 and visibleItemCount >= maxVisibleItems then
-                    break
-                end
-                if rowPassesFilters(item, segment) then
-                    visibleItemCount = visibleItemCount + 1
-                    appendLootLayoutEntry("item", y, 36, { item = item })
-                    y = y - 40
-                    y = appendExpandedItemLayout(item, y)
+        area.layoutHeight = areaHeight
+        appendLootLayoutEntry("area", y, areaHeight, { area = area })
+        y = y - (isAreaExpanded(area) and AREA_HEADER_HEIGHT or COLLAPSED_AREA_HEIGHT)
+        if isAreaExpanded(area) then
+            for _, enemy in ipairs(area.enemies or {}) do
+                appendLootLayoutEntry("enemy", y, enemy.layoutHeight or ENEMY_ROW_HEIGHT, { enemy = enemy })
+                y = y - ENEMY_ROW_HEIGHT
+                for _, item in ipairs(enemy.items or {}) do
+                    appendLootLayoutEntry("item", y, ITEM_ROW_HEIGHT, { item = item })
+                    y = y - ITEM_ROW_HEIGHT
                 end
             end
         end
+        y = y - CARD_GAP
     end
     lootContentMinHeight = -y + 16
     updateLootContentHeight()
@@ -883,7 +1296,8 @@ local function resetFilters()
     filters.minRequiredLevel = nil
     filters.maxRequiredLevel = nil
     filters.qualities = { legendary = true, epic = true, rare = true, uncommon = true, common = true, poor = true }
-    filters.enemies = { boss = true, miniBoss = true, normal = true }
+    filters.enemies = { boss = true, normal = true }
+    filters.areas = { raid = true, instance = true, world = true }
 end
 
 local function setAllQuality(value)
@@ -899,8 +1313,16 @@ end
 local function setAllEnemies(value)
     local enemies = ADDON.GetFilters().enemies
     enemies.boss = value
-    enemies.miniBoss = value
     enemies.normal = value
+end
+
+local function setAllAreas(value)
+    local filters = ADDON.GetFilters()
+    filters.areas = filters.areas or { raid = true, instance = true, world = true }
+    local areas = filters.areas
+    areas.raid = value
+    areas.instance = value
+    areas.world = value
 end
 
 local function refreshControls()
@@ -934,8 +1356,11 @@ local function refreshControls()
     window.controls.common:SetChecked(filters.qualities.common)
     window.controls.poor:SetChecked(filters.qualities.poor)
     window.controls.boss:SetChecked(filters.enemies.boss)
-    window.controls.miniBoss:SetChecked(filters.enemies.miniBoss)
     window.controls.normal:SetChecked(filters.enemies.normal)
+    filters.areas = filters.areas or { raid = true, instance = true, world = true }
+    window.controls.raid:SetChecked(filters.areas.raid)
+    window.controls.instance:SetChecked(filters.areas.instance)
+    window.controls.world:SetChecked(filters.areas.world)
 end
 
 local function addControl(parent, control, y, height, titleStyle)
@@ -1094,6 +1519,9 @@ local function createControls()
     filterTitle:SetFont(STANDARD_TEXT_FONT, 15, "")
     window.lootTitle = createSectionTitle(window, "Beute")
     window.lootTitle:SetFont(STANDARD_TEXT_FONT, 15, "")
+    window.lootTitleButton = CreateFrame("Button", nil, window)
+    window.lootTitleButton:SetScript("OnClick", toggleAllLootExpanded)
+    window.lootTitleButton:HookScript("OnMouseDown", clearFocusedNumberBox)
     local reset = createSmallButton(filterFrame, "Zurücksetzen", 88)
     window.resetFiltersButton = reset
     reset:GetFontString():SetFont(STANDARD_TEXT_FONT, 10, "")
@@ -1160,7 +1588,6 @@ local function createControls()
 
     local enemyMap = {
         { key = "boss", label = "Boss", color = BOSS_TEXT_COLOR },
-        { key = "miniBoss", label = "Elite", color = "ffd200" },
         { key = "normal", label = "Normal", color = "ffffff" },
     }
     local enemyEntries = {}
@@ -1176,10 +1603,38 @@ local function createControls()
     end
     y = createGroupCard(filterFrame, y, "Gegner", function()
         local enemies = ADDON.GetFilters().enemies
-        local allChecked = enemies.boss and enemies.miniBoss and enemies.normal
+        local allChecked = enemies.boss and enemies.normal
         setAllEnemies(not allChecked)
         ADDON.RefreshMainWindow()
     end, enemyEntries)
+
+    local areaMap = {
+        { key = "raid", label = "Raid", color = "b88cff" },
+        { key = "instance", label = "Instanz", color = "58a6ff" },
+        { key = "world", label = "Welt", color = "9aa3b0" },
+    }
+    local areaEntries = {}
+    for _, entry in ipairs(areaMap) do
+        local cb = createCheckbox(filterFrame, entry.label)
+        setTextColorHex(cb.text, entry.color)
+        window.controls[entry.key] = cb
+        cb:SetScript("OnClick", function(self)
+            local filters = ADDON.GetFilters()
+            filters.areas = filters.areas or { raid = true, instance = true, world = true }
+            local areas = filters.areas
+            areas[entry.key] = self:GetChecked() and true or false
+            ADDON.RefreshMainWindow()
+        end)
+        table.insert(areaEntries, { checkbox = cb })
+    end
+    y = createGroupCard(filterFrame, y, "Gebiet", function()
+        local filters = ADDON.GetFilters()
+        filters.areas = filters.areas or { raid = true, instance = true, world = true }
+        local areas = filters.areas
+        local allChecked = areas.raid and areas.instance and areas.world
+        setAllAreas(not allChecked)
+        ADDON.RefreshMainWindow()
+    end, areaEntries)
     window.filterFrameHeight = -y - CARD_GAP
     filterFrame:SetHeight(window.filterFrameHeight)
     content:SetHeight(window.filterFrameHeight)
@@ -1243,6 +1698,12 @@ local function layoutWindow(refreshContent)
         if window.lootTitle then
             window.lootTitle:ClearAllPoints()
             window.lootTitle:SetPoint("TOPLEFT", window, "TOPLEFT", rightLeft + 14, TOP_TITLE_Y)
+        end
+        if window.lootTitleButton then
+            window.lootTitleButton:ClearAllPoints()
+            window.lootTitleButton:SetPoint("TOPLEFT", window.lootTitle, "TOPLEFT", -4, 2)
+            window.lootTitleButton:SetWidth(72)
+            window.lootTitleButton:SetHeight(22)
         end
 
     end
@@ -1549,7 +2010,7 @@ function ADDON.ShowAutomationDialog()
         automationDialog.controls.primordialSaroniteAction = createAutomationRow(content, -32, PRIMORDIAL_SARONITE_LINK, { "manual", "pass", "greed", "need" }, PRIMORDIAL_SARONITE_LINK)
         automationDialog.controls.uncommonNormalAction = createAutomationRow(content, -64, "|cff1eff00Ungewöhnliche|r Beute von normalen Gegnern", standardActions)
         automationDialog.controls.rareNormalAction = createAutomationRow(content, -96, "|cff0070ddSeltene|r Beute von normalen Gegnern", standardActions)
-        automationDialog.controls.epicBoeNonBossAction = createAutomationRow(content, -128, "|cffa335eeEpische|r, beim Anlegen gebundene Beute von Nicht-Bossen", { "manual", "need", "pass", "disenchant", "greed" })
+        automationDialog.controls.epicBoeNonBossAction = createAutomationRow(content, -128, "|cffa335eeEpische|r BoE Beute von normalen Gegnern", { "manual", "need", "pass", "disenchant", "greed" })
 
         local apply = createSmallButton(automationDialog, "Anwenden", 112)
         automationDialog.apply = apply

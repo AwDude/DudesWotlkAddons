@@ -766,13 +766,13 @@ local function showLoadLayoutDialog(profileId, profileName)
         end,
         OnShow = function(self)
             local data = self.data or {}
-            self:SetWidth(430)
-            self:SetHeight((data.showAccountWarning and 214) or 168)
+            self:SetWidth(560)
+            self:SetHeight((data.showAccountWarning and 190) or 150)
             local text = _G[self:GetName() .. "Text"]
             if text then
                 text:ClearAllPoints()
                 text:SetPoint("TOP", self, "TOP", 0, -20)
-                text:SetWidth(360)
+                text:SetWidth(500)
             end
         end,
         timeout = 0,

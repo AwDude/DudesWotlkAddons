@@ -9,8 +9,11 @@ local DEFAULT_WIDTH = 1120
 local DEFAULT_HEIGHT = 430
 local MIN_WIDTH = 1120
 local MIN_HEIGHT = 520
+local OVERLAY_FRAME_LEVEL = 900
 
-local OUTER_PADDING = 28
+local OUTER_PADDING_X = 14
+local OUTER_PADDING_TOP = 22
+local OUTER_PADDING_BOTTOM = 14
 local PANEL_PADDING = 10
 local SECTION_GAP = 10
 local KEY_GAP = 8
@@ -63,6 +66,52 @@ local keyDefs = {
     { "BUTTON3", "Wheel Click", "mouse", 1, 2 },
     { "MOUSEWHEELDOWN", "Wheel Dn", "mouse", 1, 3 },
 }
+
+local function raiseOverlay()
+    if not overlay then
+        return
+    end
+    overlay:SetFrameLevel(OVERLAY_FRAME_LEVEL)
+    if overlay.Raise then
+        overlay:Raise()
+    end
+    if overlay.closeButton then
+        overlay.closeButton:SetFrameLevel(OVERLAY_FRAME_LEVEL + 3)
+    end
+    if overlay.settingsButton then
+        overlay.settingsButton:SetFrameLevel(OVERLAY_FRAME_LEVEL + 3)
+    end
+    for _, button in pairs(keyButtons) do
+        button:SetFrameLevel(OVERLAY_FRAME_LEVEL + 1)
+        for _, actionText in ipairs(button.interfaceActionTexts or {}) do
+            actionText:SetDrawLayer("OVERLAY", 2)
+        end
+        for _, iconFrame in ipairs(button.macroIconFrames or {}) do
+            iconFrame:SetFrameLevel(OVERLAY_FRAME_LEVEL + 2)
+            if iconFrame.texture then
+                iconFrame.texture:SetDrawLayer("OVERLAY", 1)
+            end
+            if iconFrame.label then
+                iconFrame.label:SetDrawLayer("OVERLAY", 2)
+            end
+        end
+        if button.label then
+            button.label:SetDrawLayer("OVERLAY", 2)
+        end
+        if button.bonusBarText then
+            button.bonusBarText:SetDrawLayer("OVERLAY", 2)
+        end
+        if button.macroPlaceholder then
+            button.macroPlaceholder:SetDrawLayer("OVERLAY", 2)
+        end
+        if button.conflictText then
+            button.conflictText:SetDrawLayer("OVERLAY", 2)
+        end
+    end
+    if resizeGrip then
+        resizeGrip:SetFrameLevel(OVERLAY_FRAME_LEVEL + 3)
+    end
+end
 
 local function setBackdrop(frame, r, g, b, a)
     frame:SetBackdrop({
@@ -538,8 +587,8 @@ end
 local function getLayoutMetrics()
     local width = math.max(MIN_WIDTH, overlay:GetWidth() or DEFAULT_WIDTH)
     local height = math.max(MIN_HEIGHT, overlay:GetHeight() or DEFAULT_HEIGHT)
-    local contentWidth = math.max(1, width - OUTER_PADDING * 2)
-    local contentHeight = math.max(1, height - OUTER_PADDING * 2)
+    local contentWidth = math.max(1, width - OUTER_PADDING_X * 2)
+    local contentHeight = math.max(1, height - OUTER_PADDING_TOP - OUTER_PADDING_BOTTOM)
     local totalKeyGaps = (KEYBOARD_COLS - 1) * KEY_GAP + (MOUSE_COLS - 1) * KEY_GAP
     local totalPanelPadding = PANEL_PADDING * 4
     local keyWidth = (contentWidth - SECTION_GAP - totalPanelPadding - totalKeyGaps) / (KEYBOARD_COLS + MOUSE_COLS)
@@ -555,9 +604,9 @@ local function getLayoutMetrics()
     return {
         keyWidth = keyWidth,
         keyHeight = keyHeight,
-        keyboardX = OUTER_PADDING,
-        mouseX = OUTER_PADDING + keyboardWidth + SECTION_GAP,
-        panelY = OUTER_PADDING,
+        keyboardX = OUTER_PADDING_X,
+        mouseX = OUTER_PADDING_X + keyboardWidth + SECTION_GAP,
+        panelY = OUTER_PADDING_TOP,
         keyboardWidth = keyboardWidth,
         mouseWidth = mouseWidth,
         panelHeight = panelHeight,
@@ -784,8 +833,8 @@ end
 
 local function createHeader(parent)
     parent.closeButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    parent.closeButton:SetWidth(36)
-    parent.closeButton:SetHeight(30)
+    parent.closeButton:SetWidth(34)
+    parent.closeButton:SetHeight(22)
     parent.closeButton:SetFrameLevel(parent:GetFrameLevel() + 2)
     parent.closeButton:SetText("X")
     styleButton(parent.closeButton)
@@ -794,8 +843,8 @@ local function createHeader(parent)
     end)
 
     parent.settingsButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    parent.settingsButton:SetWidth(36)
-    parent.settingsButton:SetHeight(30)
+    parent.settingsButton:SetWidth(34)
+    parent.settingsButton:SetHeight(22)
     parent.settingsButton:SetFrameLevel(parent:GetFrameLevel() + 2)
     parent.settingsButton:SetText("...")
     styleButton(parent.settingsButton)
@@ -874,7 +923,10 @@ function ADDON.CreateOverlay()
 
     overlay = CreateFrame("Frame", "DudesFlexBindingsOverlay", UIParent)
     overlay:SetFrameStrata("MEDIUM")
-    overlay:SetFrameLevel(100)
+    overlay:SetFrameLevel(OVERLAY_FRAME_LEVEL)
+    if overlay.SetToplevel then
+        overlay:SetToplevel(true)
+    end
     overlay:EnableMouse(true)
     overlay:SetMovable(true)
     if overlay.SetResizable then
@@ -885,6 +937,7 @@ function ADDON.CreateOverlay()
     end
     overlay:RegisterForDrag("LeftButton")
     overlay:SetScript("OnDragStart", function(self)
+        raiseOverlay()
         self:StartMoving()
     end)
     overlay:SetScript("OnDragStop", function(self)
@@ -900,6 +953,7 @@ function ADDON.CreateOverlay()
     createHeader(overlay)
     createLayoutButtons(overlay)
     createResizeGrip(overlay)
+    raiseOverlay()
     loadOverlayPlacement()
     layoutOverlay()
 
@@ -925,12 +979,16 @@ function ADDON.ToggleOverlay()
     if overlay:IsShown() then
         overlay:Hide()
     else
+        raiseOverlay()
         overlay:Show()
+        raiseOverlay()
     end
 end
 
 function ADDON.ShowOverlay()
     ADDON.CreateOverlay()
     ADDON.RefreshOverlay()
+    raiseOverlay()
     overlay:Show()
+    raiseOverlay()
 end
