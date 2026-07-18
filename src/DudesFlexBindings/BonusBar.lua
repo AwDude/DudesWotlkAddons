@@ -452,7 +452,10 @@ local function hideButtonTooltip()
 end
 
 function ADDON.IsBonusBarActive()
-    return getBonusBarOffset() > 0
+    if UnitHasVehicleUI and UnitHasVehicleUI("player") then
+        return true
+    end
+    return getBonusBarOffset() == 5
 end
 
 local function savePlacement()
