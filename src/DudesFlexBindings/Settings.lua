@@ -283,13 +283,14 @@ local function refreshBonusBarSettingsControls()
         return
     end
     local settings = ADDON.GetSettings()
-    local enabled = settings.showBonusBar and true or false
+    local bonusSettings = ADDON.GetBonusBarSettings()
+    local enabled = bonusSettings.showBonusBar and true or false
 
     if optionsPanel.bonusBarCheckbox then
         optionsPanel.bonusBarCheckbox:SetChecked(enabled)
     end
     if optionsPanel.alignBonusBarCheckbox then
-        optionsPanel.alignBonusBarCheckbox:SetChecked(settings.alignBonusBar and true or false)
+        optionsPanel.alignBonusBarCheckbox:SetChecked(bonusSettings.alignBonusBar and true or false)
         setFrameEnabled(optionsPanel.alignBonusBarCheckbox, enabled)
         showFrame(optionsPanel.alignBonusBarCheckbox, enabled)
     end
@@ -308,17 +309,17 @@ local function refreshBonusBarSettingsControls()
         showFrame(optionsPanel.bonusBarGrowthSelector.text, enabled)
     end
     if optionsPanel.showBonusBarBindingsCheckbox then
-        optionsPanel.showBonusBarBindingsCheckbox:SetChecked(settings.showBonusBarBindings and true or false)
+        optionsPanel.showBonusBarBindingsCheckbox:SetChecked(bonusSettings.showBonusBarBindings and true or false)
         setFrameEnabled(optionsPanel.showBonusBarBindingsCheckbox, enabled)
         showFrame(optionsPanel.showBonusBarBindingsCheckbox, enabled)
     end
     if optionsPanel.showBonusBarTooltipsCheckbox then
-        optionsPanel.showBonusBarTooltipsCheckbox:SetChecked(settings.showBonusBarTooltips and true or false)
+        optionsPanel.showBonusBarTooltipsCheckbox:SetChecked(bonusSettings.showBonusBarTooltips and true or false)
         setFrameEnabled(optionsPanel.showBonusBarTooltipsCheckbox, enabled)
         showFrame(optionsPanel.showBonusBarTooltipsCheckbox, enabled)
     end
     if optionsPanel.clickBonusBarButtonsCheckbox then
-        optionsPanel.clickBonusBarButtonsCheckbox:SetChecked(settings.clickBonusBarButtons and true or false)
+        optionsPanel.clickBonusBarButtonsCheckbox:SetChecked(bonusSettings.clickBonusBarButtons and true or false)
         setFrameEnabled(optionsPanel.clickBonusBarButtonsCheckbox, enabled)
         showFrame(optionsPanel.clickBonusBarButtonsCheckbox, enabled)
     end
@@ -328,15 +329,18 @@ local function refreshBonusBarSettingsControls()
     end
     if optionsPanel.bonusBarBindingSizeControl then
         optionsPanel.bonusBarBindingSizeControl.refresh()
-        setFrameEnabled(optionsPanel.bonusBarBindingSizeControl.decrease, enabled and settings.showBonusBarBindings)
-        setFrameEnabled(optionsPanel.bonusBarBindingSizeControl.increase, enabled and settings.showBonusBarBindings)
-        optionsPanel.bonusBarBindingSizeControl.text:SetAlpha(enabled and settings.showBonusBarBindings and 1 or 0.45)
-        optionsPanel.bonusBarBindingSizeControl.value:SetAlpha(enabled and settings.showBonusBarBindings and 1 or 0.45)
-        showFrame(optionsPanel.bonusBarBindingSizeControl, enabled and settings.showBonusBarBindings)
-        showFrame(optionsPanel.bonusBarBindingSizeControl.text, enabled and settings.showBonusBarBindings)
+        setFrameEnabled(optionsPanel.bonusBarBindingSizeControl.decrease, enabled and bonusSettings.showBonusBarBindings)
+        setFrameEnabled(optionsPanel.bonusBarBindingSizeControl.increase, enabled and bonusSettings.showBonusBarBindings)
+        optionsPanel.bonusBarBindingSizeControl.text:SetAlpha(enabled and bonusSettings.showBonusBarBindings and 1 or 0.45)
+        optionsPanel.bonusBarBindingSizeControl.value:SetAlpha(enabled and bonusSettings.showBonusBarBindings and 1 or 0.45)
+        showFrame(optionsPanel.bonusBarBindingSizeControl, enabled and bonusSettings.showBonusBarBindings)
+        showFrame(optionsPanel.bonusBarBindingSizeControl.text, enabled and bonusSettings.showBonusBarBindings)
     end
     if optionsPanel.characterInterfaceBindingsCheckbox and ADDON.IsCharacterBindingSetEnabled then
         optionsPanel.characterInterfaceBindingsCheckbox:SetChecked(ADDON.IsCharacterBindingSetEnabled())
+    end
+    if optionsPanel.characterBonusBarSettingsCheckbox and ADDON.IsCharacterBonusBarSettingsEnabled then
+        optionsPanel.characterBonusBarSettingsCheckbox:SetChecked(ADDON.IsCharacterBonusBarSettingsEnabled())
     end
     if optionsPanel.triggerOnKeyDownCheckbox then
         optionsPanel.triggerOnKeyDownCheckbox:SetChecked(settings.triggerOnKeyDown and true or false)
@@ -418,7 +422,7 @@ local function showBonusAnchorSelector(selector)
             button:SetScript("OnClick", function(self)
                 local owner = bonusAnchorSelectorPopup.owner
                 if owner then
-                    ADDON.GetSettings().bonusBarAnchor = self.value
+                    ADDON.GetBonusBarSettings().bonusBarAnchor = self.value
                     owner.refresh()
                     refreshBonusBarSettingsControls()
                     if ADDON.RefreshEditorBindings then
@@ -440,7 +444,7 @@ local function showBonusAnchorSelector(selector)
         return
     end
 
-    local value = ADDON.GetSettings().bonusBarAnchor or "topLeft"
+    local value = ADDON.GetBonusBarSettings().bonusBarAnchor or "topLeft"
     for _, button in ipairs(bonusAnchorSelectorPopup.buttons or {}) do
         if button.value == value then
             button:SetBackdropBorderColor(1, 0.82, 0.1, 1)
@@ -483,7 +487,7 @@ local function showBonusGrowthSelector(selector)
             button:SetScript("OnClick", function(self)
                 local owner = bonusGrowthSelectorPopup.owner
                 if owner then
-                    ADDON.GetSettings().bonusBarGrowthDirection = self.value
+                    ADDON.GetBonusBarSettings().bonusBarGrowthDirection = self.value
                     owner.refresh()
                     refreshBonusBarSettingsControls()
                     if ADDON.RefreshEditorBindings then
@@ -505,7 +509,7 @@ local function showBonusGrowthSelector(selector)
         return
     end
 
-    local value = ADDON.GetSettings().bonusBarGrowthDirection or "right"
+    local value = ADDON.GetBonusBarSettings().bonusBarGrowthDirection or "right"
     for _, button in ipairs(bonusGrowthSelectorPopup.buttons or {}) do
         if button.value == value then
             button:SetBackdropBorderColor(1, 0.82, 0.1, 1)
@@ -535,7 +539,7 @@ local function createBonusAnchorSelector(parent, anchor, yOffset)
         showBonusAnchorSelector(self)
     end)
     selector.refresh = function()
-        selector.valueText:SetText(getBonusAnchorText(ADDON.GetSettings().bonusBarAnchor or "topLeft"))
+        selector.valueText:SetText(getBonusAnchorText(ADDON.GetBonusBarSettings().bonusBarAnchor or "topLeft"))
     end
     selector.refresh()
     return selector
@@ -557,7 +561,7 @@ local function createBonusGrowthSelector(parent, anchor, yOffset)
         showBonusGrowthSelector(self)
     end)
     selector.refresh = function()
-        selector.valueText:SetText(getBonusGrowthText(ADDON.GetSettings().bonusBarGrowthDirection or "right"))
+        selector.valueText:SetText(getBonusGrowthText(ADDON.GetBonusBarSettings().bonusBarGrowthDirection or "right"))
     end
     selector.refresh()
     return selector
@@ -597,7 +601,7 @@ local function createBindingSizeControl(parent, anchor, yOffset)
     control.increase.label:SetText("+")
 
     local function adjust(delta)
-        local settings = ADDON.GetSettings()
+        local settings = ADDON.GetBonusBarSettings()
         settings.bonusBarBindingFontSize = math.max(7, math.min(16, (settings.bonusBarBindingFontSize or 10) + delta))
         control.refresh()
         if ADDON.RefreshBonusBar then
@@ -614,7 +618,7 @@ local function createBindingSizeControl(parent, anchor, yOffset)
         adjust(1)
     end)
     control.refresh = function()
-        control.value:SetText(tostring(ADDON.GetSettings().bonusBarBindingFontSize or 10))
+        control.value:SetText(tostring(ADDON.GetBonusBarSettings().bonusBarBindingFontSize or 10))
     end
     control.refresh()
     return control
@@ -1250,7 +1254,19 @@ local function createOptionsPanel()
         end
     end)
 
-    optionsPanel.triggerOnKeyDownCheckbox = createCheckbox(content, optionsPanel.characterInterfaceBindingsCheckbox, -4, "Tasten beim Drücken auslösen", function()
+    optionsPanel.characterBonusBarSettingsCheckbox = createCheckbox(content, optionsPanel.characterInterfaceBindingsCheckbox, -4, "Charakterspezifische Bonusleisten Einstellungen", function()
+        return ADDON.IsCharacterBonusBarSettingsEnabled and ADDON.IsCharacterBonusBarSettingsEnabled()
+    end, function(value)
+        if ADDON.SetCharacterBonusBarSettingsEnabled then
+            return ADDON.SetCharacterBonusBarSettingsEnabled(value)
+        end
+    end, function()
+        if ADDON.RefreshEditorBindings then
+            ADDON.RefreshEditorBindings()
+        end
+    end)
+
+    optionsPanel.triggerOnKeyDownCheckbox = createCheckbox(content, optionsPanel.characterBonusBarSettingsCheckbox, -4, "Tasten beim Drücken auslösen", function()
         return ADDON.GetSettings().triggerOnKeyDown
     end, function(value)
         ADDON.GetSettings().triggerOnKeyDown = value
@@ -1344,18 +1360,18 @@ local function createOptionsPanel()
     optionsPanel.bonusTitle = bonusTitle
 
     optionsPanel.bonusBarCheckbox = createCheckbox(content, bonusTitle, -8, "Bonusleiste anzeigen", function()
-        return ADDON.GetSettings().showBonusBar
+        return ADDON.GetBonusBarSettings().showBonusBar
     end, function(value)
-        ADDON.GetSettings().showBonusBar = value
+        ADDON.GetBonusBarSettings().showBonusBar = value
         if ADDON.RefreshEditorBindings then
             ADDON.RefreshEditorBindings()
         end
     end)
 
     optionsPanel.alignBonusBarCheckbox = createCheckbox(content, optionsPanel.bonusBarCheckbox, -2, "Bonusleiste ausrichten", function()
-        return ADDON.GetSettings().alignBonusBar
+        return ADDON.GetBonusBarSettings().alignBonusBar
     end, function(value)
-        ADDON.GetSettings().alignBonusBar = value
+        ADDON.GetBonusBarSettings().alignBonusBar = value
         if ADDON.RefreshEditorBindings then
             ADDON.RefreshEditorBindings()
         end
@@ -1366,9 +1382,9 @@ local function createOptionsPanel()
     optionsPanel.bonusBarGrowthSelector = createBonusGrowthSelector(content, optionsPanel.bonusBarAnchorSelector, -2)
 
     optionsPanel.showBonusBarBindingsCheckbox = createCheckbox(content, optionsPanel.bonusBarGrowthSelector, -2, "Bonusleisten Belegungen anzeigen", function()
-        return ADDON.GetSettings().showBonusBarBindings
+        return ADDON.GetBonusBarSettings().showBonusBarBindings
     end, function(value)
-        ADDON.GetSettings().showBonusBarBindings = value
+        ADDON.GetBonusBarSettings().showBonusBarBindings = value
         if ADDON.RefreshEditorBindings then
             ADDON.RefreshEditorBindings()
         end
@@ -1377,18 +1393,18 @@ local function createOptionsPanel()
     optionsPanel.bonusBarBindingSizeControl = createBindingSizeControl(content, optionsPanel.showBonusBarBindingsCheckbox, -2)
 
     optionsPanel.showBonusBarTooltipsCheckbox = createCheckbox(content, optionsPanel.bonusBarBindingSizeControl, -2, "Bonusleisten Tooltips anzeigen", function()
-        return ADDON.GetSettings().showBonusBarTooltips
+        return ADDON.GetBonusBarSettings().showBonusBarTooltips
     end, function(value)
-        ADDON.GetSettings().showBonusBarTooltips = value
+        ADDON.GetBonusBarSettings().showBonusBarTooltips = value
         if ADDON.RefreshEditorBindings then
             ADDON.RefreshEditorBindings()
         end
     end)
 
     optionsPanel.clickBonusBarButtonsCheckbox = createCheckbox(content, optionsPanel.showBonusBarTooltipsCheckbox, -2, "Bonusleisten Buttons klickbar", function()
-        return ADDON.GetSettings().clickBonusBarButtons
+        return ADDON.GetBonusBarSettings().clickBonusBarButtons
     end, function(value)
-        ADDON.GetSettings().clickBonusBarButtons = value
+        ADDON.GetBonusBarSettings().clickBonusBarButtons = value
         if ADDON.RefreshEditorBindings then
             ADDON.RefreshEditorBindings()
         end

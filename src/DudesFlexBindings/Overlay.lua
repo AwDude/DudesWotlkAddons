@@ -91,6 +91,9 @@ local function raiseOverlay()
             if iconFrame.texture then
                 iconFrame.texture:SetDrawLayer("OVERLAY", 1)
             end
+            for _, borderTexture in ipairs(iconFrame.border or {}) do
+                borderTexture:SetDrawLayer("OVERLAY", 3)
+            end
             if iconFrame.label then
                 iconFrame.label:SetDrawLayer("OVERLAY", 2)
             end
@@ -193,6 +196,36 @@ local function createSolidTexture(parent, r, g, b)
     texture:SetAllPoints(parent)
     texture:SetTexture(r, g, b, 1)
     return texture
+end
+
+local function addIconBorder(parent, target)
+    target = target or parent
+    local thickness = 2
+    local top = parent:CreateTexture(nil, "OVERLAY")
+    top:SetTexture(0, 0, 0, 1)
+    top:SetDrawLayer("OVERLAY", 3)
+    top:SetPoint("TOPLEFT", target, "TOPLEFT", 0, 0)
+    top:SetPoint("TOPRIGHT", target, "TOPRIGHT", 0, 0)
+    top:SetHeight(thickness)
+    local bottom = parent:CreateTexture(nil, "OVERLAY")
+    bottom:SetTexture(0, 0, 0, 1)
+    bottom:SetDrawLayer("OVERLAY", 3)
+    bottom:SetPoint("BOTTOMLEFT", target, "BOTTOMLEFT", 0, 0)
+    bottom:SetPoint("BOTTOMRIGHT", target, "BOTTOMRIGHT", 0, 0)
+    bottom:SetHeight(thickness)
+    local left = parent:CreateTexture(nil, "OVERLAY")
+    left:SetTexture(0, 0, 0, 1)
+    left:SetDrawLayer("OVERLAY", 3)
+    left:SetPoint("TOPLEFT", target, "TOPLEFT", 0, 0)
+    left:SetPoint("BOTTOMLEFT", target, "BOTTOMLEFT", 0, 0)
+    left:SetWidth(thickness)
+    local right = parent:CreateTexture(nil, "OVERLAY")
+    right:SetTexture(0, 0, 0, 1)
+    right:SetDrawLayer("OVERLAY", 3)
+    right:SetPoint("TOPRIGHT", target, "TOPRIGHT", 0, 0)
+    right:SetPoint("BOTTOMRIGHT", target, "BOTTOMRIGHT", 0, 0)
+    right:SetWidth(thickness)
+    return { top, bottom, left, right }
 end
 
 addBorderHover = function(frame)
@@ -800,9 +833,14 @@ local function createKeyButton(parent, def)
     button.macroIconFrames = {}
     for i = 1, 16 do
         local iconFrame = CreateFrame("Frame", nil, button)
+        iconFrame.borderBackground = iconFrame:CreateTexture(nil, "BACKGROUND")
+        iconFrame.borderBackground:SetAllPoints(iconFrame)
+        iconFrame.borderBackground:SetTexture(0, 0, 0, 1)
         iconFrame.texture = iconFrame:CreateTexture(nil, "ARTWORK")
-        iconFrame.texture:SetAllPoints(iconFrame)
+        iconFrame.texture:SetPoint("TOPLEFT", iconFrame, "TOPLEFT", 2, -2)
+        iconFrame.texture:SetPoint("BOTTOMRIGHT", iconFrame, "BOTTOMRIGHT", -2, 2)
         iconFrame.texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        iconFrame.border = addIconBorder(iconFrame)
         iconFrame.label = createText(iconFrame, 8, "CENTER")
         iconFrame.label:SetPoint("BOTTOM", iconFrame, "BOTTOM", 0, ICON_LABEL_PADDING)
         iconFrame.label:SetJustifyH("CENTER")

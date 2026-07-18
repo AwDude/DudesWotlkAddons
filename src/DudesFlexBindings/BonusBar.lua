@@ -77,7 +77,7 @@ local function styleControlButton(button)
 end
 
 local function getSettings()
-    local settings = ADDON.GetSettings()
+    local settings = ADDON.GetBonusBarSettings and ADDON.GetBonusBarSettings() or ADDON.GetSettings()
     settings.bonusBar = settings.bonusBar or {}
     settings.bonusBar.point = settings.bonusBar.point or DEFAULT_POINT
     settings.bonusBar.relativePoint = settings.bonusBar.relativePoint or DEFAULT_RELATIVE_POINT
@@ -888,7 +888,7 @@ function ADDON.CreateBonusBar()
     hideAlignButton.text:SetAllPoints(hideAlignButton)
     hideAlignButton.text:SetText("Ausrichten ausblenden")
     hideAlignButton:SetScript("OnClick", function()
-        local settings = ADDON.GetSettings()
+        local settings = ADDON.GetBonusBarSettings and ADDON.GetBonusBarSettings() or ADDON.GetSettings()
         settings.alignBonusBar = false
         savePlacement()
         if ADDON.RefreshSettings then

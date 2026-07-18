@@ -8,6 +8,17 @@ local ACCOUNT_BINDING_SET = 1
 local CHARACTER_BINDING_SET = 2
 local BONUS_BAR_SLOT_COUNT = 12
 local EXPORT_PREFIX = "DudesFlexBindings:1:"
+local DEFAULT_BONUS_BAR_SETTINGS = {
+    showBonusBar = true,
+    alignBonusBar = false,
+    bonusBarAnchor = "topLeft",
+    bonusBarGrowthDirection = "right",
+    showBonusBarBindings = true,
+    showBonusBarTooltips = true,
+    clickBonusBarButtons = false,
+    bonusBarBindingFontSize = 10,
+    bonusBar = {},
+}
 
 BINDING_HEADER_DUDESADDONS = "Dude's Addons"
 BINDING_NAME_DUDESFLEXBINDINGS_TOGGLE = "Dude's Flex Bindings: Fenster ein-/ausblenden"
@@ -45,6 +56,7 @@ local draftLayout
 local isOwnBindingAction
 local applyDefaultBindingActionNow
 local dominosPossessBarHooked
+local copyTable
 
 local BLIZZARD_DEFAULT_BINDINGS = {
     ESCAPE = { normal = "TOGGLEGAMEMENU" },
@@ -159,7 +171,19 @@ local function ensureSpec(character, specIndex)
     return character.specs[specIndex]
 end
 
-local function copyTable(source)
+local function ensureBonusBarSettings(settings)
+    for key, value in pairs(DEFAULT_BONUS_BAR_SETTINGS) do
+        if type(value) == "table" then
+            settings[key] = settings[key] or copyTable(value)
+        elseif settings[key] == nil then
+            settings[key] = value
+        end
+    end
+    settings.bonusBar = settings.bonusBar or {}
+    return settings
+end
+
+copyTable = function(source)
     return DudesUtils.Table.Copy(source)
 end
 
@@ -200,6 +224,7 @@ local function makeEmptyLayout()
         bindings = {},
         defaultBindings = {},
         bonusBarBindings = {},
+        bonusBarSettings = copyTable(DEFAULT_BONUS_BAR_SETTINGS),
     }
 end
 
@@ -208,6 +233,7 @@ local function normalizeLayout(layout)
     layout.bindings = layout.bindings or {}
     layout.defaultBindings = layout.defaultBindings or {}
     layout.bonusBarBindings = layout.bonusBarBindings or {}
+    layout.bonusBarSettings = ensureBonusBarSettings(layout.bonusBarSettings or {})
     return layout
 end
 
@@ -216,15 +242,18 @@ local function buildBlizzardDefaultLayout()
         bindings = {},
         defaultBindings = copyTable(BLIZZARD_DEFAULT_BINDINGS),
         bonusBarBindings = copyTable(BLIZZARD_DEFAULT_BONUS_BAR_BINDINGS),
+        bonusBarSettings = copyTable(DEFAULT_BONUS_BAR_SETTINGS),
     }
 end
 
 local function getCurrentAppliedLayout()
     local spec = ADDON.GetCurrentSpecDB()
+    local bonusSpec = ADDON.GetBonusBarSpecDB()
     return {
         bindings = copyTable(spec.bindings),
         defaultBindings = copyTable(spec.defaultBindings),
-        bonusBarBindings = copyTable(spec.bonusBarBindings),
+        bonusBarBindings = copyTable(bonusSpec.bonusBarBindings),
+        bonusBarSettings = copyTable(ADDON.GetBonusBarSettings()),
     }
 end
 
@@ -258,6 +287,11 @@ function ADDON.InitDB()
     DudesFlexBindingsDB.profiles = DudesFlexBindingsDB.profiles or {}
     DudesFlexBindingsDB.sharedProfiles = DudesFlexBindingsDB.sharedProfiles or {}
     DudesFlexBindingsDB.savedLayouts = DudesFlexBindingsDB.savedLayouts or {}
+    DudesFlexBindingsDB.sharedBonusBar = DudesFlexBindingsDB.sharedBonusBar or {}
+    DudesFlexBindingsDB.sharedBonusBar.settings = ensureBonusBarSettings(DudesFlexBindingsDB.sharedBonusBar.settings or {})
+    DudesFlexBindingsDB.sharedBonusBar.specs = DudesFlexBindingsDB.sharedBonusBar.specs or {}
+    ensureSpec(DudesFlexBindingsDB.sharedBonusBar, 1)
+    ensureSpec(DudesFlexBindingsDB.sharedBonusBar, 2)
 
     local realm = ensureTable(DudesFlexBindingsDB.profiles, getRealmName())
     local character = ensureTable(realm, getCharacterName())
@@ -274,31 +308,10 @@ function ADDON.InitDB()
     if character.settings.triggerOnKeyDown == nil then
         character.settings.triggerOnKeyDown = false
     end
-    if character.settings.showBonusBar == nil then
-        character.settings.showBonusBar = true
+    ensureBonusBarSettings(character.settings)
+    if character.settings.characterBonusBarSettings == nil then
+        character.settings.characterBonusBarSettings = false
     end
-    if character.settings.alignBonusBar == nil then
-        character.settings.alignBonusBar = false
-    end
-    if character.settings.bonusBarAnchor == nil then
-        character.settings.bonusBarAnchor = "topLeft"
-    end
-    if character.settings.bonusBarGrowthDirection == nil then
-        character.settings.bonusBarGrowthDirection = "right"
-    end
-    if character.settings.showBonusBarBindings == nil then
-        character.settings.showBonusBarBindings = true
-    end
-    if character.settings.showBonusBarTooltips == nil then
-        character.settings.showBonusBarTooltips = true
-    end
-    if character.settings.clickBonusBarButtons == nil then
-        character.settings.clickBonusBarButtons = false
-    end
-    if character.settings.bonusBarBindingFontSize == nil then
-        character.settings.bonusBarBindingFontSize = 10
-    end
-    character.settings.bonusBar = character.settings.bonusBar or {}
     character.specs = character.specs or {}
     ensureSpec(character, 1)
     ensureSpec(character, 2)
@@ -311,6 +324,71 @@ end
 
 function ADDON.GetSettings()
     return ADDON.GetCharacterDB().settings
+end
+
+function ADDON.IsCharacterBonusBarSettingsEnabled()
+    return ADDON.GetSettings().characterBonusBarSettings ~= false
+end
+
+function ADDON.GetBonusBarSettings()
+    local settings = ADDON.GetSettings()
+    if settings.characterBonusBarSettings == false then
+        ADDON.InitDB()
+        return ensureBonusBarSettings(DudesFlexBindingsDB.sharedBonusBar.settings)
+    end
+    return ensureBonusBarSettings(settings)
+end
+
+function ADDON.GetBonusBarSpecDB()
+    if ADDON.GetSettings().characterBonusBarSettings == false then
+        ADDON.InitDB()
+        return ensureSpec(DudesFlexBindingsDB.sharedBonusBar, getActiveSpec())
+    end
+    return ADDON.GetCurrentSpecDB()
+end
+
+local function copyBonusBarSettings(target, source)
+    source = ensureBonusBarSettings(source or {})
+    for key in pairs(DEFAULT_BONUS_BAR_SETTINGS) do
+        target[key] = copyTable(source[key])
+    end
+    ensureBonusBarSettings(target)
+end
+
+function ADDON.SetCharacterBonusBarSettingsEnabled(enabled)
+    enabled = enabled and true or false
+    ADDON.InitDB()
+    local settings = ADDON.GetSettings()
+    if settings.characterBonusBarSettings == enabled then
+        return true
+    end
+
+    local previousBonusSettings = copyTable(ADDON.GetBonusBarSettings())
+    local previousBonusBindings = copyTable(ADDON.GetBonusBarSpecDB().bonusBarBindings or {})
+    settings.characterBonusBarSettings = enabled
+
+    if enabled then
+        copyBonusBarSettings(settings, previousBonusSettings)
+        ADDON.GetCurrentSpecDB().bonusBarBindings = previousBonusBindings
+    else
+        ensureBonusBarSettings(DudesFlexBindingsDB.sharedBonusBar.settings)
+        ensureSpec(DudesFlexBindingsDB.sharedBonusBar, getActiveSpec())
+    end
+
+    ADDON.ApplyRuntime()
+    if ADDON.RefreshBonusBar then
+        ADDON.RefreshBonusBar()
+    end
+    if ADDON.RefreshOverlay then
+        ADDON.RefreshOverlay()
+    end
+    if ADDON.RefreshSettings then
+        ADDON.RefreshSettings()
+    end
+    if ADDON.RefreshEditorBindings then
+        ADDON.RefreshEditorBindings()
+    end
+    return true
 end
 
 function ADDON.GetActiveBindingSet()
@@ -345,6 +423,7 @@ function ADDON.SetCharacterBindingSetEnabled(enabled)
     else
         return false
     end
+    ADDON.SetCharacterBonusBarSettingsEnabled(enabled)
     if ADDON.RefreshSettings then
         ADDON.RefreshSettings()
     end
@@ -515,7 +594,7 @@ function ADDON.GetBonusBarSlotCount()
 end
 
 function ADDON.GetBonusBarBindings(key)
-    local spec = ADDON.GetCurrentSpecDB()
+    local spec = ADDON.GetBonusBarSpecDB()
     return spec.bonusBarBindings[key] or {}
 end
 
@@ -537,7 +616,7 @@ function ADDON.SetBonusBarBindingAction(bindingKey, slot)
     end
 
     slot = normalizeBonusSlot(slot)
-    local spec = ADDON.GetCurrentSpecDB()
+    local spec = ADDON.GetBonusBarSpecDB()
     spec.bonusBarBindings[key] = spec.bonusBarBindings[key] or {}
     if slot then
         spec.bonusBarBindings[key][modifier] = slot
@@ -568,7 +647,7 @@ function ADDON.FindDraftBindingForBonusBarAction(slot, excludedBindingKey)
         return nil
     end
 
-    local spec = ADDON.GetCurrentSpecDB()
+    local spec = ADDON.GetBonusBarSpecDB()
     for _, key in ipairs(getLayoutKeyList()) do
         local keyBindings = spec.bonusBarBindings[key]
         if keyBindings then
@@ -599,7 +678,7 @@ function ADDON.GetBonusBarBindingTextForSlot(slot)
         ctrl = "<c>",
         alt = "<a>",
     }
-    local spec = ADDON.GetCurrentSpecDB()
+    local spec = ADDON.GetBonusBarSpecDB()
     for _, key in ipairs(getLayoutKeyList()) do
         local keyBindings = spec.bonusBarBindings[key]
         if keyBindings then
@@ -816,7 +895,7 @@ function ADDON.ClearAllBindingsForKey(key)
     local spec = ADDON.GetCurrentSpecDB()
     spec.bindings[key] = nil
     spec.defaultBindings[key] = nil
-    spec.bonusBarBindings[key] = nil
+    ADDON.GetBonusBarSpecDB().bonusBarBindings[key] = nil
     ADDON.ApplyRuntime()
     if ADDON.RefreshOverlay then
         ADDON.RefreshOverlay()
@@ -997,19 +1076,20 @@ function ADDON.ApplyRuntime()
     ClearOverrideBindings(ownerFrame)
 
     local spec = ADDON.GetCurrentSpecDB()
+    local bonusSpec = ADDON.GetBonusBarSpecDB()
     local keysToBind = {}
     for key, binding in pairs(spec.bindings) do
         if binding and binding.macrotext and binding.macrotext ~= "" then
             keysToBind[key] = true
         end
     end
-    for key in pairs(spec.bonusBarBindings or {}) do
+    for key in pairs(bonusSpec.bonusBarBindings or {}) do
         keysToBind[key] = true
     end
 
     for key in pairs(keysToBind) do
         local binding = spec.bindings[key]
-        local bonusBindings = (spec.bonusBarBindings or {})[key] or {}
+        local bonusBindings = (bonusSpec.bonusBarBindings or {})[key] or {}
         local hasMacro = binding and binding.macrotext and binding.macrotext ~= ""
         local hasBonus
         for _, slot in pairs(bonusBindings) do
@@ -1177,6 +1257,7 @@ local function makeProfile(name, layout, systemId, protected)
         bindings = copyTable((layout or {}).bindings),
         defaultBindings = copyTable((layout or {}).defaultBindings),
         bonusBarBindings = copyTable((layout or {}).bonusBarBindings),
+        bonusBarSettings = copyTable((layout or {}).bonusBarSettings or DEFAULT_BONUS_BAR_SETTINGS),
     }
 end
 
@@ -1322,6 +1403,26 @@ local function sanitizeBonusBarBindings(bonusBarBindings)
     return sanitized
 end
 
+local function sanitizeBonusBarSettings(settings)
+    if type(settings) ~= "table" then
+        return copyTable(DEFAULT_BONUS_BAR_SETTINGS)
+    end
+    local sanitized = {}
+    for key, defaultValue in pairs(DEFAULT_BONUS_BAR_SETTINGS) do
+        local value = settings[key]
+        if type(defaultValue) == "boolean" then
+            sanitized[key] = value and true or false
+        elseif type(defaultValue) == "number" then
+            sanitized[key] = tonumber(value) or defaultValue
+        elseif type(defaultValue) == "string" then
+            sanitized[key] = type(value) == "string" and value or defaultValue
+        elseif type(defaultValue) == "table" then
+            sanitized[key] = type(value) == "table" and copyTable(value) or copyTable(defaultValue)
+        end
+    end
+    return ensureBonusBarSettings(sanitized)
+end
+
 local function sanitizeImportedLayout(layout)
     if type(layout) ~= "table" then
         return nil
@@ -1330,6 +1431,7 @@ local function sanitizeImportedLayout(layout)
         bindings = sanitizeBindings(layout.bindings),
         defaultBindings = sanitizeDefaultBindings(layout.defaultBindings),
         bonusBarBindings = sanitizeBonusBarBindings(layout.bonusBarBindings),
+        bonusBarSettings = sanitizeBonusBarSettings(layout.bonusBarSettings),
     }
 end
 
@@ -1383,13 +1485,18 @@ function ADDON.LoadLayout(layout)
 
     layout = layout or makeEmptyLayout()
     local spec = ADDON.GetCurrentSpecDB()
+    local bonusSpec = ADDON.GetBonusBarSpecDB()
     spec.bindings = copyTable(layout.bindings or {})
     spec.defaultBindings = copyTable(layout.defaultBindings or {})
-    spec.bonusBarBindings = copyTable(layout.bonusBarBindings or {})
+    bonusSpec.bonusBarBindings = copyTable(layout.bonusBarBindings or {})
+    copyBonusBarSettings(ADDON.GetBonusBarSettings(), layout.bonusBarSettings or DEFAULT_BONUS_BAR_SETTINGS)
 
     applyCurrentDefaultBindings(true)
 
     ADDON.ApplyRuntime()
+    if ADDON.RefreshBonusBar then
+        ADDON.RefreshBonusBar()
+    end
     if ADDON.RefreshOverlay then
         ADDON.RefreshOverlay()
     end
@@ -1405,6 +1512,7 @@ function ADDON.LoadLayoutProfile(profileId)
         bindings = profile.bindings or {},
         defaultBindings = profile.defaultBindings or {},
         bonusBarBindings = profile.bonusBarBindings or {},
+        bonusBarSettings = profile.bonusBarSettings or DEFAULT_BONUS_BAR_SETTINGS,
     }) then
         return false
     end
@@ -1434,6 +1542,7 @@ function ADDON.ExportLayoutProfile(profileId)
         bindings = profile.bindings or {},
         defaultBindings = profile.defaultBindings or {},
         bonusBarBindings = profile.bonusBarBindings or {},
+        bonusBarSettings = profile.bonusBarSettings or DEFAULT_BONUS_BAR_SETTINGS,
     })
 end
 
@@ -1491,7 +1600,7 @@ function ADDON.CopyCurrentSpecToSharedProfile(profileName)
     ADDON.InitDB()
     DudesFlexBindingsDB.sharedProfiles[profileName] = {
         bindings = copyTable(ADDON.GetCurrentSpecDB().bindings),
-        bonusBarBindings = copyTable(ADDON.GetCurrentSpecDB().bonusBarBindings),
+        bonusBarBindings = copyTable(ADDON.GetBonusBarSpecDB().bonusBarBindings),
     }
     return true
 end
@@ -1503,7 +1612,7 @@ function ADDON.LoadSharedProfileToCurrentSpec(profileName)
         return false
     end
     ADDON.GetCurrentSpecDB().bindings = copyTable(profile.bindings or {})
-    ADDON.GetCurrentSpecDB().bonusBarBindings = copyTable(profile.bonusBarBindings or {})
+    ADDON.GetBonusBarSpecDB().bonusBarBindings = copyTable(profile.bonusBarBindings or {})
     ADDON.ApplyRuntime()
     if ADDON.RefreshOverlay then
         ADDON.RefreshOverlay()

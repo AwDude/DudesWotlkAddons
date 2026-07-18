@@ -166,6 +166,32 @@ local function createSolidTexture(parent, r, g, b)
     return texture
 end
 
+local function addIconBorder(parent, target)
+    target = target or parent
+    local thickness = 2
+    local top = parent:CreateTexture(nil, "OVERLAY")
+    top:SetTexture(0, 0, 0, 1)
+    top:SetPoint("TOPLEFT", target, "TOPLEFT", 0, 0)
+    top:SetPoint("TOPRIGHT", target, "TOPRIGHT", 0, 0)
+    top:SetHeight(thickness)
+    local bottom = parent:CreateTexture(nil, "OVERLAY")
+    bottom:SetTexture(0, 0, 0, 1)
+    bottom:SetPoint("BOTTOMLEFT", target, "BOTTOMLEFT", 0, 0)
+    bottom:SetPoint("BOTTOMRIGHT", target, "BOTTOMRIGHT", 0, 0)
+    bottom:SetHeight(thickness)
+    local left = parent:CreateTexture(nil, "OVERLAY")
+    left:SetTexture(0, 0, 0, 1)
+    left:SetPoint("TOPLEFT", target, "TOPLEFT", 0, 0)
+    left:SetPoint("BOTTOMLEFT", target, "BOTTOMLEFT", 0, 0)
+    left:SetWidth(thickness)
+    local right = parent:CreateTexture(nil, "OVERLAY")
+    right:SetTexture(0, 0, 0, 1)
+    right:SetPoint("TOPRIGHT", target, "TOPRIGHT", 0, 0)
+    right:SetPoint("BOTTOMRIGHT", target, "BOTTOMRIGHT", 0, 0)
+    right:SetWidth(thickness)
+    return { top, bottom, left, right }
+end
+
 local function addShadow(frame)
     return
 end
@@ -1003,7 +1029,7 @@ local function showBonusAnchorSelector(selector)
             button.text:SetText(option.text)
             button:SetScript("OnClick", function(self)
                 local owner = bonusAnchorSelectorPopup.owner
-                ADDON.GetSettings().bonusBarAnchor = self.value
+                ADDON.GetBonusBarSettings().bonusBarAnchor = self.value
                 if owner and owner.refresh then
                     owner.refresh()
                 end
@@ -1028,7 +1054,7 @@ local function showBonusAnchorSelector(selector)
         return
     end
 
-    local value = ADDON.GetSettings().bonusBarAnchor or "topLeft"
+    local value = ADDON.GetBonusBarSettings().bonusBarAnchor or "topLeft"
     for _, button in ipairs(bonusAnchorSelectorPopup.buttons or {}) do
         if button.value == value then
             button:SetBackdropBorderColor(1, 0.82, 0.1, 1)
@@ -1070,7 +1096,7 @@ local function showBonusGrowthSelector(selector)
             button.text:SetText(option.text)
             button:SetScript("OnClick", function(self)
                 local owner = bonusGrowthSelectorPopup.owner
-                ADDON.GetSettings().bonusBarGrowthDirection = self.value
+                ADDON.GetBonusBarSettings().bonusBarGrowthDirection = self.value
                 if owner and owner.refresh then
                     owner.refresh()
                 end
@@ -1095,7 +1121,7 @@ local function showBonusGrowthSelector(selector)
         return
     end
 
-    local value = ADDON.GetSettings().bonusBarGrowthDirection or "right"
+    local value = ADDON.GetBonusBarSettings().bonusBarGrowthDirection or "right"
     for _, button in ipairs(bonusGrowthSelectorPopup.buttons or {}) do
         if button.value == value then
             button:SetBackdropBorderColor(1, 0.82, 0.1, 1)
@@ -1124,7 +1150,7 @@ local function createEditorBonusAnchorSelector(parent)
         showBonusAnchorSelector(self)
     end)
     selector.refresh = function()
-        selector.valueText:SetText(getBonusAnchorText(ADDON.GetSettings().bonusBarAnchor or "topLeft"))
+        selector.valueText:SetText(getBonusAnchorText(ADDON.GetBonusBarSettings().bonusBarAnchor or "topLeft"))
     end
     selector.refresh()
     return selector
@@ -1145,7 +1171,7 @@ local function createEditorBonusGrowthSelector(parent)
         showBonusGrowthSelector(self)
     end)
     selector.refresh = function()
-        selector.valueText:SetText(getBonusGrowthText(ADDON.GetSettings().bonusBarGrowthDirection or "right"))
+        selector.valueText:SetText(getBonusGrowthText(ADDON.GetBonusBarSettings().bonusBarGrowthDirection or "right"))
     end
     selector.refresh()
     return selector
@@ -1182,7 +1208,7 @@ local function createEditorBindingSizeControl(parent)
     control.increase.text:SetText("+")
 
     local function adjust(delta)
-        local settings = ADDON.GetSettings()
+        local settings = ADDON.GetBonusBarSettings()
         settings.bonusBarBindingFontSize = math.max(7, math.min(16, (settings.bonusBarBindingFontSize or 10) + delta))
         control.refresh()
         if ADDON.RefreshSettings then
@@ -1199,7 +1225,7 @@ local function createEditorBindingSizeControl(parent)
         adjust(1)
     end)
     control.refresh = function()
-        control.value:SetText(tostring(ADDON.GetSettings().bonusBarBindingFontSize or 10))
+        control.value:SetText(tostring(ADDON.GetBonusBarSettings().bonusBarBindingFontSize or 10))
     end
     control.refresh()
     return control
@@ -1333,8 +1359,8 @@ setEditorMode = function(mode)
         showFrame(checkbox.clickArea, showBonus)
     end
     if editor.bonusBarBindingSizeControl then
-        showFrame(editor.bonusBarBindingSizeControl, showBonus and ADDON.GetSettings().showBonusBarBindings)
-        showFrame(editor.bonusBarBindingSizeControl.text, showBonus and ADDON.GetSettings().showBonusBarBindings)
+        showFrame(editor.bonusBarBindingSizeControl, showBonus and ADDON.GetBonusBarSettings().showBonusBarBindings)
+        showFrame(editor.bonusBarBindingSizeControl.text, showBonus and ADDON.GetBonusBarSettings().showBonusBarBindings)
     end
     if showBonus and refreshBonusBarEditorSettingsControls then
         refreshBonusBarEditorSettingsControls()
@@ -1736,9 +1762,12 @@ refreshBonusBarEditorSettingsControls = function()
     if not editor then
         return
     end
-    local settings = ADDON.GetSettings()
+    local settings = ADDON.GetBonusBarSettings()
     local enabled = settings.showBonusBar and true or false
 
+    if editor.characterBonusBarSettingsCheckbox then
+        editor.characterBonusBarSettingsCheckbox:SetChecked(ADDON.IsCharacterBonusBarSettingsEnabled and ADDON.IsCharacterBonusBarSettingsEnabled() or false)
+    end
     if editor.bonusBarShowCheckbox then
         editor.bonusBarShowCheckbox:SetChecked(enabled)
     end
@@ -2380,6 +2409,7 @@ local function createSuggestionButton(parent, index)
     button.texture:SetPoint("LEFT", button, "LEFT", 4, 0)
     button.texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     button.texture:SetVertexColor(1, 1, 1, 1)
+    button.iconBorder = addIconBorder(button, button.texture)
     button.text = createText(button, 10)
     button.text:SetPoint("LEFT", button.texture, "RIGHT", 5, 0)
     button.text:SetPoint("RIGHT", button, "RIGHT", -5, 0)
@@ -2407,6 +2437,7 @@ local function createSelectedIconButton(parent, index)
     button.texture = button:CreateTexture(nil, "ARTWORK")
     button.texture:SetAllPoints(button)
     button.texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    button.iconBorder = addIconBorder(button)
     button:SetScript("OnClick", function()
         if selectedIcons[index] then
             table.remove(selectedIcons, index)
@@ -2434,6 +2465,7 @@ local function createSelectedIconRow(parent, index)
     row.texture:SetHeight(24)
     row.texture:SetPoint("LEFT", row, "LEFT", 4, 0)
     row.texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    row.iconBorder = addIconBorder(row, row.texture)
 
     row.name = createText(row, 10)
     row.name:SetPoint("LEFT", row.texture, "RIGHT", 6, 0)
@@ -2562,6 +2594,7 @@ local function createMatrixColumnHeader(parent, index)
     header.texture:SetHeight(20)
     header.texture:SetPoint("CENTER", header, "CENTER", 0, 0)
     header.texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    header.iconBorder = addIconBorder(header, header.texture)
 
     header.text = createText(header, 10, "CENTER")
     header.text:SetAllPoints(header)
@@ -2603,6 +2636,7 @@ local function createMatrixCellButton(parent, rowIndex, colIndex)
     button.texture:SetWidth(24)
     button.texture:SetHeight(24)
     button.texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    button.iconBorder = addIconBorder(button, button.texture)
     button:SetScript("OnClick", function(self)
         if isMatrixRowLocked(self.rowKey) then
             return
@@ -2877,17 +2911,26 @@ local function createEditor()
     editor.bonusSettingsTitle:SetText("Bonusleisten Anzeige")
     setHeadingText(editor.bonusSettingsTitle)
 
-    editor.bonusBarShowCheckbox = createEditorCheckbox(editor, "Bonusleiste anzeigen", function()
-        return ADDON.GetSettings().showBonusBar
+    editor.characterBonusBarSettingsCheckbox = createEditorCheckbox(editor, "Charakterspezifische Bonusleisten Einstellungen", function()
+        return ADDON.IsCharacterBonusBarSettingsEnabled and ADDON.IsCharacterBonusBarSettingsEnabled()
     end, function(value)
-        ADDON.GetSettings().showBonusBar = value
+        if ADDON.SetCharacterBonusBarSettingsEnabled then
+            return ADDON.SetCharacterBonusBarSettingsEnabled(value)
+        end
     end)
-    editor.bonusBarShowCheckbox:SetPoint("TOPLEFT", editor.bonusSettingsTitle, "BOTTOMLEFT", 0, -10)
+    editor.characterBonusBarSettingsCheckbox:SetPoint("TOPLEFT", editor.bonusSettingsTitle, "BOTTOMLEFT", 0, -10)
+
+    editor.bonusBarShowCheckbox = createEditorCheckbox(editor, "Bonusleiste anzeigen", function()
+        return ADDON.GetBonusBarSettings().showBonusBar
+    end, function(value)
+        ADDON.GetBonusBarSettings().showBonusBar = value
+    end)
+    editor.bonusBarShowCheckbox:SetPoint("TOPLEFT", editor.characterBonusBarSettingsCheckbox, "BOTTOMLEFT", 0, -4)
 
     editor.bonusBarAlignCheckbox = createEditorCheckbox(editor, "Bonusleiste ausrichten", function()
-        return ADDON.GetSettings().alignBonusBar
+        return ADDON.GetBonusBarSettings().alignBonusBar
     end, function(value)
-        ADDON.GetSettings().alignBonusBar = value
+        ADDON.GetBonusBarSettings().alignBonusBar = value
     end)
     editor.bonusBarAlignCheckbox:SetPoint("TOPLEFT", editor.bonusBarShowCheckbox, "BOTTOMLEFT", 0, -4)
 
@@ -2898,26 +2941,27 @@ local function createEditor()
     editor.bonusBarGrowthSelector:SetPoint("TOPLEFT", editor.bonusBarAnchorSelector, "BOTTOMLEFT", 0, -4)
 
     editor.bonusBarShowBindingsCheckbox = createEditorCheckbox(editor, "Bonusleisten Belegungen anzeigen", function()
-        return ADDON.GetSettings().showBonusBarBindings
+        return ADDON.GetBonusBarSettings().showBonusBarBindings
     end, function(value)
-        ADDON.GetSettings().showBonusBarBindings = value
+        ADDON.GetBonusBarSettings().showBonusBarBindings = value
     end)
     editor.bonusBarShowBindingsCheckbox:SetPoint("TOPLEFT", editor.bonusBarGrowthSelector, "BOTTOMLEFT", 0, -4)
     editor.bonusBarBindingSizeControl = createEditorBindingSizeControl(editor)
     editor.bonusBarBindingSizeControl:SetPoint("TOPLEFT", editor.bonusBarShowBindingsCheckbox, "BOTTOMLEFT", 0, -4)
     editor.bonusBarShowTooltipsCheckbox = createEditorCheckbox(editor, "Bonusleisten Tooltips anzeigen", function()
-        return ADDON.GetSettings().showBonusBarTooltips
+        return ADDON.GetBonusBarSettings().showBonusBarTooltips
     end, function(value)
-        ADDON.GetSettings().showBonusBarTooltips = value
+        ADDON.GetBonusBarSettings().showBonusBarTooltips = value
     end)
     editor.bonusBarShowTooltipsCheckbox:SetPoint("TOPLEFT", editor.bonusBarBindingSizeControl, "BOTTOMLEFT", 0, -4)
     editor.bonusBarClickButtonsCheckbox = createEditorCheckbox(editor, "Bonusleisten Buttons klickbar", function()
-        return ADDON.GetSettings().clickBonusBarButtons
+        return ADDON.GetBonusBarSettings().clickBonusBarButtons
     end, function(value)
-        ADDON.GetSettings().clickBonusBarButtons = value
+        ADDON.GetBonusBarSettings().clickBonusBarButtons = value
     end)
     editor.bonusBarClickButtonsCheckbox:SetPoint("TOPLEFT", editor.bonusBarShowTooltipsCheckbox, "BOTTOMLEFT", 0, -4)
     editor.bonusSettingsCheckboxes = {
+        editor.characterBonusBarSettingsCheckbox,
         editor.bonusBarShowCheckbox,
         editor.bonusBarAlignCheckbox,
         editor.bonusBarAnchorSelector,
