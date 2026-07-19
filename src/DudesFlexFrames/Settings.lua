@@ -11,6 +11,9 @@ end
 
 local function refreshControls()
 	local settings = ADDON.GetSettings()
+	if controls.characterSpecificSettings then
+		controls.characterSpecificSettings:SetChecked(ADDON.UsesCharacterSpecificSettings and ADDON.UsesCharacterSpecificSettings() or false)
+	end
 	if controls.restoreOpenRolls then
 		controls.restoreOpenRolls:SetChecked(settings.restoreOpenRolls and true or false)
 	end
@@ -60,7 +63,7 @@ local function settingChanged()
 	end
 end
 
-local function createCheckbox(parent, anchor, yOffset, label, settingKey)
+local function createCheckbox(parent, anchor, yOffset, label, settingKey, setter)
 	local checkbox = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
 	checkbox:SetWidth(22)
 	checkbox:SetHeight(22)
@@ -69,7 +72,12 @@ local function createCheckbox(parent, anchor, yOffset, label, settingKey)
 	checkbox.text:SetPoint("LEFT", checkbox, "RIGHT", 2, 1)
 	checkbox.text:SetText(label)
 	checkbox:SetScript("OnClick", function(self)
-		ADDON.GetSettings()[settingKey] = self:GetChecked() and true or false
+		local value = self:GetChecked() and true or false
+		if setter then
+			setter(value)
+		else
+			ADDON.GetSettings()[settingKey] = value
+		end
 		settingChanged()
 	end)
 	return checkbox
@@ -118,10 +126,14 @@ local function createOptionsPanel()
 	subtitle:SetText("Positionen und Skalierungen der verschiebbaren Frames")
 	subtitle:SetTextColor(0.8, 0.8, 0.8)
 
+	controls.characterSpecificSettings = createCheckbox(settingsPanel, subtitle, -12, "Charakterspezifische Einstellungen", nil, function(value)
+		ADDON.SetCharacterSpecificSettings(value)
+	end)
+
 	local resetButton = CreateFrame("Button", nil, settingsPanel, "UIPanelButtonTemplate")
 	resetButton:SetWidth(170)
 	resetButton:SetHeight(24)
-	resetButton:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -18)
+	resetButton:SetPoint("TOPLEFT", controls.characterSpecificSettings, "BOTTOMLEFT", 0, -14)
 	resetButton:SetText("Alle Frames zurücksetzen")
 	resetButton:SetScript("OnClick", ADDON.ResetFrames)
 

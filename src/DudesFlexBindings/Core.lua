@@ -19,6 +19,10 @@ local DEFAULT_BONUS_BAR_SETTINGS = {
     bonusBarBindingFontSize = 10,
     bonusBar = {},
 }
+local SHARED_GENERAL_SETTING_KEYS = {
+    showMinimapButton = true,
+    triggerOnKeyDown = true,
+}
 
 BINDING_HEADER_DUDESADDONS = "Dude's Addons"
 BINDING_NAME_DUDESFLEXBINDINGS_TOGGLE = "Dude's Flex Bindings: Fenster ein-/ausblenden"
@@ -312,6 +316,18 @@ function ADDON.InitDB()
     if character.settings.characterBonusBarSettings == nil then
         character.settings.characterBonusBarSettings = false
     end
+    if DudesFlexBindingsDB.sharedSettings == nil then
+        DudesFlexBindingsDB.sharedSettings = {
+            showMinimapButton = character.settings.showMinimapButton,
+            triggerOnKeyDown = character.settings.triggerOnKeyDown,
+        }
+    end
+    if DudesFlexBindingsDB.sharedSettings.showMinimapButton == nil then
+        DudesFlexBindingsDB.sharedSettings.showMinimapButton = true
+    end
+    if DudesFlexBindingsDB.sharedSettings.triggerOnKeyDown == nil then
+        DudesFlexBindingsDB.sharedSettings.triggerOnKeyDown = false
+    end
     character.specs = character.specs or {}
     ensureSpec(character, 1)
     ensureSpec(character, 2)
@@ -328,6 +344,31 @@ end
 
 function ADDON.IsCharacterBonusBarSettingsEnabled()
     return ADDON.GetSettings().characterBonusBarSettings ~= false
+end
+
+function ADDON.IsCharacterSpecificSettingsEnabled()
+    return ADDON.IsCharacterBindingSetEnabled() and ADDON.IsCharacterBonusBarSettingsEnabled()
+end
+
+function ADDON.GetSyncedSetting(key)
+    local settings = ADDON.GetSettings()
+    if not SHARED_GENERAL_SETTING_KEYS[key] or ADDON.IsCharacterSpecificSettingsEnabled() then
+        return settings[key]
+    end
+    ADDON.InitDB()
+    return DudesFlexBindingsDB.sharedSettings[key]
+end
+
+function ADDON.SetSyncedSetting(key, value)
+    if not SHARED_GENERAL_SETTING_KEYS[key] then
+        ADDON.GetSettings()[key] = value
+    elseif ADDON.IsCharacterSpecificSettingsEnabled() then
+        ADDON.GetSettings()[key] = value
+    else
+        ADDON.InitDB()
+        DudesFlexBindingsDB.sharedSettings[key] = value
+    end
+    return true
 end
 
 function ADDON.GetBonusBarSettings()
@@ -431,6 +472,30 @@ function ADDON.SetCharacterBindingSetEnabled(enabled)
         ADDON.RefreshEditorBindings()
     end
     ADDON.ApplyRuntime()
+    return true
+end
+
+function ADDON.SetCharacterSpecificSettingsEnabled(enabled)
+    enabled = enabled and true or false
+    local previousShowMinimapButton = ADDON.GetSyncedSetting("showMinimapButton")
+    local previousTriggerOnKeyDown = ADDON.GetSyncedSetting("triggerOnKeyDown")
+
+    if not ADDON.SetCharacterBindingSetEnabled(enabled) then
+        return false
+    end
+
+    if enabled then
+        local settings = ADDON.GetSettings()
+        settings.showMinimapButton = previousShowMinimapButton and true or false
+        settings.triggerOnKeyDown = previousTriggerOnKeyDown and true or false
+    end
+
+    if ADDON.UpdateRuntimeButtonClickRegistration then
+        ADDON.UpdateRuntimeButtonClickRegistration()
+    end
+    if ADDON.RefreshSettings then
+        ADDON.RefreshSettings()
+    end
     return true
 end
 
@@ -695,7 +760,12 @@ end
 
 local function getButtonNameForKey(key)
     local name = string.upper(key or "")
-    name = string.gsub(name, "[^A-Z0-9]", "_")
+    -- Frame names must be unique. Replacing every special character with "_"
+    -- made keys such as ^, ß, ´, + and - all share the same secure button.
+    -- Encode every non-ASCII byte instead so localized keys remain distinct.
+    name = string.gsub(name, "[^A-Z0-9]", function(character)
+        return string.format("_%02X", string.byte(character))
+    end)
     return BUTTON_PREFIX .. name
 end
 
@@ -931,7 +1001,7 @@ local function updateRuntimeButtonClickRegistration(button)
     if not button or not button.RegisterForClicks then
         return
     end
-    if ADDON.GetSettings().triggerOnKeyDown then
+    if ADDON.GetSyncedSetting("triggerOnKeyDown") then
         button:RegisterForClicks("LeftButtonDown")
     else
         button:RegisterForClicks("LeftButtonUp")

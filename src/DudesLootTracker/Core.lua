@@ -21,6 +21,7 @@ local DEFAULT_SETTINGS = {
     filters = {
         ownOnly = false,
         boeOnly = false,
+        emblems = false,
         minItemLevel = nil,
         maxItemLevel = nil,
         minRequiredLevel = nil,
@@ -137,11 +138,21 @@ function ADDON.InitDB()
     local realm = ensureTable(DudesLootTrackerDB.profiles, getRealmName())
     local character = ensureTable(realm, getCharacterName())
     character.settings = character.settings or {}
+    if DudesLootTrackerDB.globalSettings == nil then
+        -- Preserve the settings of existing installations as the initial
+        -- global profile when upgrading from character-only settings.
+        DudesLootTrackerDB.globalSettings = copyTable(character.settings)
+    end
+    DudesLootTrackerDB.globalSettings = DudesLootTrackerDB.globalSettings or {}
+    if character.useCharacterSettings == nil then
+        character.useCharacterSettings = false
+    end
     character.segments = character.segments or {}
     character.raidStates = character.raidStates or {}
     character.nextSegmentId = character.nextSegmentId or 1
     character.nextItemId = character.nextItemId or 1
 
+    mergeDefaults(DudesLootTrackerDB.globalSettings, DEFAULT_SETTINGS)
     mergeDefaults(character.settings, DEFAULT_SETTINGS)
     return character
 end
@@ -151,7 +162,27 @@ function ADDON.GetCharacterDB()
 end
 
 function ADDON.GetSettings()
-    return ADDON.GetCharacterDB().settings
+    local character = ADDON.GetCharacterDB()
+    if character.useCharacterSettings then
+        return character.settings
+    end
+    return DudesLootTrackerDB.globalSettings
+end
+
+function ADDON.UsesCharacterSpecificSettings()
+    return ADDON.GetCharacterDB().useCharacterSettings and true or false
+end
+
+function ADDON.SetCharacterSpecificSettings(enabled)
+    local character = ADDON.GetCharacterDB()
+    enabled = enabled and true or false
+    if character.useCharacterSettings == enabled then
+        return false
+    end
+    character.settings = copyTable(DudesLootTrackerDB.globalSettings)
+    mergeDefaults(character.settings, DEFAULT_SETTINGS)
+    character.useCharacterSettings = enabled
+    return true
 end
 
 function ADDON.GetFilters()

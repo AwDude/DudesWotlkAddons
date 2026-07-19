@@ -44,10 +44,13 @@ local CONTROL_ROW_HEIGHT = 26
 local CARD_GAP = 6
 local AREA_HEADER_HEIGHT = 28
 local COLLAPSED_AREA_HEIGHT = 34
-local ENEMY_ROW_HEIGHT = 34
+local ENEMY_ROW_HEIGHT = 26
 local ITEM_ROW_HEIGHT = 34
+local AREA_CONTENT_BOTTOM_PADDING = 8
 local LOOT_AREA_CONTENT_X = 24
 local LOOT_AREA_RIGHT_INSET = 12
+local LOOT_AREA_META_RIGHT_INSET = 24
+local LOOT_SEPARATOR_RIGHT_INSET = 16
 local PRIMORDIAL_SARONITE_LINK = "|cffa335ee|Hitem:49908:0:0:0:0:0:0:0:80|h[Urtümliches Saronit]|h|r"
 local AUTOMATION_ACTION_LABELS = {
     manual = "Manuell",
@@ -394,6 +397,7 @@ local function acquireLootRow(index)
     row.count:SetPoint("BOTTOMRIGHT", row.icon, "BOTTOMRIGHT", -1, 1)
     row.count:SetWidth(24)
     row.count:SetHeight(10)
+    row.count:SetFont(STANDARD_TEXT_FONT, 11, "OUTLINE")
     row.count:SetTextColor(1, 1, 1)
     row.accent = row:CreateTexture(nil, "BACKGROUND")
     row.accent:SetTexture("Interface\\Buttons\\WHITE8X8")
@@ -406,6 +410,8 @@ local function acquireLootRow(index)
     row.text = createText(row, 10)
     row.subtext = createText(row, 8)
     row.detail = createText(row, 9, "RIGHT")
+    row.enemyHitbox = CreateFrame("Frame", nil, row)
+    row.enemyHitbox:EnableMouse(true)
     row.itemHitbox = CreateFrame("Frame", nil, row)
     row.itemHitbox:EnableMouse(true)
     row.detailHitbox = CreateFrame("Frame", nil, row)
@@ -432,6 +438,11 @@ local function resetLootRow(row)
     if row.detail then
         row.detail:SetText("")
         row.detail:SetJustifyH("RIGHT")
+    end
+    if row.enemyHitbox then
+        row.enemyHitbox:Hide()
+        row.enemyHitbox:SetScript("OnEnter", nil)
+        row.enemyHitbox:SetScript("OnLeave", nil)
     end
     if row.itemHitbox then
         row.itemHitbox:Hide()
@@ -488,6 +499,24 @@ local function rowPassesFilters(item, segment)
     filters.qualities = filters.qualities or {}
     filters.enemies = filters.enemies or {}
     filters.areas = filters.areas or { raid = true, instance = true, world = true }
+
+    local isEmblem = ADDON.IsEmblem and ADDON.IsEmblem(item)
+    if isEmblem then
+        if not filters.emblems then
+            return false
+        end
+        local player = ADDON.GetPlayerName()
+        local receivedByPlayer
+        for _, recipient in ipairs(item.recipients or {}) do
+            if recipient.name == player or string.match(recipient.name or "", "^([^%-]+)") == player then
+                receivedByPlayer = true
+                break
+            end
+        end
+        if not receivedByPlayer then
+            return false
+        end
+    end
 
     if filters.ownOnly then
         local player = ADDON.GetPlayerName()
@@ -549,15 +578,22 @@ local function formatLootTimestamp(timestamp)
     return ""
 end
 
+local function formatSegmentLootTimestamp(timestamp)
+    if timestamp and date then
+        return date("%d.%m.%Y %H:%M", timestamp)
+    end
+    return "Zeitpunkt unbekannt"
+end
+
 local function formatLootMethod(method)
     local labels = {
-        trade = "gehandelt",
-        master = "zugewiesen",
-        greed = "Mit Gier gewonnen",
-        need = "Mit Bedarf gewonnen",
-        disenchant = "Mit Entzaubern gewonnen",
-        loot = "geplündert",
-        manual = "manuell",
+        trade = "Handel",
+        master = "Zugewiesen",
+        greed = "Gier",
+        need = "Bedarf",
+        disenchant = "Entzaubern",
+        loot = "Geplündert",
+        manual = "Manuell",
     }
     return labels[method] or method or ""
 end
@@ -575,7 +611,7 @@ end
 
 local function formatLootMethodDetail(item)
     if item and item.blizzardRollStarted and #(item.recipients or {}) == 0 then
-        return item.rollMethod and formatLootMethod(item.rollMethod) or ""
+        return ""
     end
     local parts = {}
     for _, recipient in ipairs(item.recipients or {}) do
@@ -624,8 +660,10 @@ local function formatDisenchantRewardDetails(item)
     end
     local rewards = {}
     local order = {}
-    for _, rewardLink in ipairs(item.disenchantRewards) do
-        local itemId = ADDON.GetItemId(rewardLink) or tostring(rewardLink or "")
+    for _, rewardEntry in ipairs(item.disenchantRewards) do
+        local rewardLink = type(rewardEntry) == "table" and rewardEntry.link or rewardEntry
+        local rewardCount = type(rewardEntry) == "table" and (tonumber(rewardEntry.count) or 1) or 1
+        local itemId = (type(rewardEntry) == "table" and rewardEntry.itemId) or ADDON.GetItemId(rewardLink) or tostring(rewardLink or "")
         local reward = rewards[itemId]
         if not reward then
             reward = {
@@ -635,7 +673,7 @@ local function formatDisenchantRewardDetails(item)
             rewards[itemId] = reward
             table.insert(order, itemId)
         end
-        reward.count = reward.count + 1
+        reward.count = reward.count + rewardCount
     end
     local lines = {}
     for _, itemId in ipairs(order) do
@@ -716,6 +754,9 @@ local ARMOR_TYPES = {
 }
 
 local function formatItemInfo(item)
+    if ADDON.IsEmblem and ADDON.IsEmblem(item) then
+        return ""
+    end
     local parts = {}
     local slot = item.slot or ""
     local subType = item.itemSubType or ""
@@ -897,6 +938,7 @@ local function setupLootTimestampTooltip(frame, item)
             if timestampText ~= "" then
                 GameTooltip:AddLine(" ")
             end
+            GameTooltip:AddLine("Entzauber-Ergebnis:", 1, 1, 1)
             for _, rewardLine in ipairs(rewardLines) do
                 GameTooltip:AddLine(rewardLine, 0.78, 0.82, 0.88)
             end
@@ -959,7 +1001,7 @@ local function addAreaHeader(index, area, y)
     setBackdrop(row, 0.032 + r * 0.05, 0.038 + g * 0.05, 0.052 + b * 0.05, 0.98)
     row:SetBackdropBorderColor(r, g, b, 0.95)
     row.subtext:ClearAllPoints()
-    row.subtext:SetPoint("TOPRIGHT", row, "TOPRIGHT", -LOOT_AREA_RIGHT_INSET, isAreaExpanded(area) and -10 or -8)
+    row.subtext:SetPoint("TOPRIGHT", row, "TOPRIGHT", -LOOT_AREA_META_RIGHT_INSET, isAreaExpanded(area) and -10 or -8)
     row.subtext:SetHeight(18)
     row.subtext:SetFont(STANDARD_TEXT_FONT, 9, "")
     row.subtext:SetTextColor(0.78, 0.82, 0.88)
@@ -1024,7 +1066,7 @@ local function addEnemyRow(index, enemy, y)
     setBackdrop(row, 0.035, 0.041, 0.052, 0)
     row:SetBackdropBorderColor(0.18, 0.21, 0.28, 0)
     row.text:ClearAllPoints()
-    row.text:SetPoint("TOP", row, "TOP", 0, -9)
+    row.text:SetPoint("TOP", row, "TOP", 0, -4)
     row.text:SetHeight(18)
     row.text:SetFont(STANDARD_TEXT_FONT, 10, "")
     row.text:SetJustifyH("CENTER")
@@ -1032,6 +1074,24 @@ local function addEnemyRow(index, enemy, y)
     local textWidth = row.text.GetStringWidth and (row.text:GetStringWidth() or 0) or 120
     local labelWidth = math.max(90, textWidth + 14)
     row.text:SetWidth(labelWidth)
+    if row.enemyHitbox then
+        local enemyTitle = tostring(enemy.title or "Gegner")
+        local timestampText = formatSegmentLootTimestamp(enemy.segment and enemy.segment.timestamp)
+        row.enemyHitbox:ClearAllPoints()
+        row.enemyHitbox:SetPoint("TOPLEFT", row.text, "TOPLEFT", -4, 2)
+        row.enemyHitbox:SetPoint("BOTTOMRIGHT", row.text, "BOTTOMRIGHT", 4, -2)
+        row.enemyHitbox:SetFrameLevel(row:GetFrameLevel() + 1)
+        row.enemyHitbox:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+            GameTooltip:AddLine(enemyTitle, 1, 1, 1)
+            GameTooltip:AddLine("Gelootet: " .. timestampText, 0.78, 0.82, 0.88)
+            GameTooltip:Show()
+        end)
+        row.enemyHitbox:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+        row.enemyHitbox:Show()
+    end
     if row.separator and row.separatorRight then
         local r, g, b = getAreaAccent(enemy.areaType)
         local rowWidth = row:GetWidth() or 600
@@ -1039,7 +1099,7 @@ local function addEnemyRow(index, enemy, y)
         local centerX = rowWidth / 2
         local leftEndX = centerX - labelHalfWidth - 6
         local rightStartX = centerX + labelHalfWidth + 6
-        local lineY = -18
+        local lineY = -13
         row.separator:Show()
         row.separator:ClearAllPoints()
         row.separator:SetPoint("TOPLEFT", row, "TOPLEFT", LOOT_AREA_CONTENT_X, lineY)
@@ -1049,7 +1109,7 @@ local function addEnemyRow(index, enemy, y)
         row.separatorRight:Show()
         row.separatorRight:ClearAllPoints()
         row.separatorRight:SetPoint("TOPLEFT", row, "TOPLEFT", rightStartX, lineY)
-        row.separatorRight:SetPoint("TOPRIGHT", row, "TOPRIGHT", -LOOT_AREA_RIGHT_INSET, lineY)
+        row.separatorRight:SetPoint("TOPRIGHT", row, "TOPRIGHT", -LOOT_SEPARATOR_RIGHT_INSET, lineY)
         row.separatorRight:SetHeight(1)
         row.separatorRight:SetVertexColor(r, g, b, 0.85)
     end
@@ -1263,6 +1323,7 @@ local function refreshLootContent()
                 enemy.layoutHeight = enemyHeight
                 areaHeight = areaHeight + enemyHeight
             end
+            areaHeight = areaHeight + AREA_CONTENT_BOTTOM_PADDING
         else
             areaHeight = COLLAPSED_AREA_HEIGHT
         end
@@ -1278,6 +1339,7 @@ local function refreshLootContent()
                     y = y - ITEM_ROW_HEIGHT
                 end
             end
+            y = y - AREA_CONTENT_BOTTOM_PADDING
         end
         y = y - CARD_GAP
     end
@@ -1291,6 +1353,7 @@ local function resetFilters()
     local filters = ADDON.GetFilters()
     filters.ownOnly = false
     filters.boeOnly = false
+    filters.emblems = false
     filters.minItemLevel = nil
     filters.maxItemLevel = nil
     filters.minRequiredLevel = nil
@@ -1345,6 +1408,7 @@ local function refreshControls()
 
     window.controls.ownOnly:SetChecked(filters.ownOnly and true or false)
     window.controls.boeOnly:SetChecked(filters.boeOnly and true or false)
+    window.controls.emblems:SetChecked(filters.emblems and true or false)
     window.controls.minItemLevel:SetText(formatOpenNumber(filters.minItemLevel))
     window.controls.maxItemLevel:SetText(formatOpenNumber(filters.maxItemLevel))
     window.controls.minRequiredLevel:SetText(formatOpenNumber(filters.minRequiredLevel))
@@ -1547,6 +1611,14 @@ local function createControls()
         ADDON.RefreshMainWindow()
     end)
     y, boeOnly.dltCard = addControl(filterFrame, boeOnly, y, nil, true)
+
+    local emblems = createCheckbox(filterFrame, "Embleme")
+    window.controls.emblems = emblems
+    emblems:SetScript("OnClick", function(self)
+        ADDON.GetFilters().emblems = self:GetChecked() and true or false
+        ADDON.RefreshMainWindow()
+    end)
+    y, emblems.dltCard = addControl(filterFrame, emblems, y, nil, true)
 
     window.controls.minItemLevel = createNumberBox(filterFrame, 38)
     window.controls.maxItemLevel = createNumberBox(filterFrame, 38)
@@ -2148,6 +2220,13 @@ end
 
 function ADDON.RefreshMainWindow()
     if window then
+        layoutWindow()
+    end
+end
+
+function ADDON.ApplySettingsProfile()
+    if window then
+        loadPlacement()
         layoutWindow()
     end
 end

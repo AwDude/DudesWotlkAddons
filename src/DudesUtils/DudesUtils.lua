@@ -3,6 +3,7 @@ DudesUtils.Array = DudesUtils.Array or {}
 DudesUtils.String = DudesUtils.String or {}
 DudesUtils.Table = DudesUtils.Table or {}
 DudesUtils.EventHandler = DudesUtils.EventHandler or {}
+DudesUtils.Dialog = DudesUtils.Dialog or {}
 
 local hiddenFrame = hiddenFrame or CreateFrame("Frame")
 local nextUpdateCallbacks = {}
@@ -143,5 +144,272 @@ function DudesUtils.OnNextUpdate(callback)
     table.insert(nextUpdateCallbacks, callback)
 	if not hiddenFrame:GetScript("OnUpdate") then
         hiddenFrame:SetScript("OnUpdate", onUpdate)
+    end
+end
+
+-- -- -- -- -- -- -- -- DIALOGS -- -- -- -- -- -- -- --
+
+local dialogFrame
+local dialogScale = 1
+local DIALOG_PADDING = 22
+local DIALOG_BUTTON_WIDTH = 126
+local DIALOG_BUTTON_HEIGHT = 24
+
+local function clampDialogValue(value, minimum, maximum)
+    return math.max(minimum, math.min(maximum, value))
+end
+
+local function setDialogBackdrop(frame, r, g, b, a)
+    frame:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 16,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    frame:SetBackdropColor(r, g, b, a)
+    frame:SetBackdropBorderColor(0.32, 0.38, 0.46, 1)
+end
+
+local function createDialogButton(parent)
+    local button = CreateFrame("Button", nil, parent)
+    button:SetWidth(DIALOG_BUTTON_WIDTH)
+    button:SetHeight(DIALOG_BUTTON_HEIGHT)
+    setDialogBackdrop(button, 0.055, 0.065, 0.08, 1)
+
+    local label = button:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    label:SetAllPoints(button)
+    label:SetJustifyH("CENTER")
+    label:SetJustifyV("MIDDLE")
+    label:SetTextColor(0.86, 0.92, 1)
+    button:SetFontString(label)
+
+    button:SetScript("OnEnter", function(self)
+        self:SetBackdropBorderColor(0.72, 0.86, 1, 1)
+    end)
+    button:SetScript("OnLeave", function(self)
+        self:SetBackdropBorderColor(0.32, 0.38, 0.46, 1)
+        self:SetBackdropColor(0.055, 0.065, 0.08, 1)
+    end)
+    button:SetScript("OnMouseDown", function(self)
+        self:SetBackdropColor(0.035, 0.042, 0.055, 1)
+    end)
+    button:SetScript("OnMouseUp", function(self)
+        self:SetBackdropColor(0.055, 0.065, 0.08, 1)
+    end)
+    return button
+end
+
+local function measureDialogText(fontString, text, width)
+    fontString:SetWidth(width)
+    fontString:SetText(text or "")
+    return math.max(1, math.ceil(fontString:GetStringHeight() or 14))
+end
+
+local function layoutDialog(frame)
+    local options = frame.options or {}
+    local width = clampDialogValue(tonumber(options.width) or 480, 360, 720)
+    local contentWidth = width - DIALOG_PADDING * 2
+    local y = -18
+
+    frame:SetWidth(width)
+
+    local title = tostring(options.title or "")
+    if title ~= "" then
+        local titleHeight = measureDialogText(frame.title, title, contentWidth)
+        frame.title:ClearAllPoints()
+        frame.title:SetPoint("TOPLEFT", frame, "TOPLEFT", DIALOG_PADDING, y)
+        frame.title:SetHeight(titleHeight)
+        frame.title:Show()
+        y = y - titleHeight - 12
+    else
+        frame.title:Hide()
+    end
+
+    local message = tostring(options.text or "")
+    if message ~= "" then
+        local messageHeight = measureDialogText(frame.message, message, contentWidth)
+        frame.message:ClearAllPoints()
+        frame.message:SetPoint("TOPLEFT", frame, "TOPLEFT", DIALOG_PADDING, y)
+        frame.message:SetHeight(messageHeight)
+        frame.message:Show()
+        y = y - messageHeight - 14
+    else
+        frame.message:Hide()
+    end
+
+    if options.hasEditBox then
+        frame.editBox:ClearAllPoints()
+        frame.editBox:SetPoint("TOPLEFT", frame, "TOPLEFT", DIALOG_PADDING, y)
+        frame.editBox:SetWidth(contentWidth)
+        frame.editBox:Show()
+        y = y - 24 - 10
+    else
+        frame.editBox:Hide()
+    end
+
+    local errorText = tostring(frame.errorMessage or "")
+    if errorText ~= "" then
+        local errorHeight = measureDialogText(frame.errorText, errorText, contentWidth)
+        frame.errorText:ClearAllPoints()
+        frame.errorText:SetPoint("TOPLEFT", frame, "TOPLEFT", DIALOG_PADDING, y)
+        frame.errorText:SetHeight(errorHeight)
+        frame.errorText:Show()
+        y = y - errorHeight - 12
+    else
+        frame.errorText:Hide()
+    end
+
+    frame.acceptButton:ClearAllPoints()
+    frame.cancelButton:ClearAllPoints()
+    local totalButtonWidth = DIALOG_BUTTON_WIDTH * 2 + 12
+    frame.acceptButton:SetPoint("TOPLEFT", frame, "TOPLEFT", (width - totalButtonWidth) / 2, y)
+    frame.cancelButton:SetPoint("LEFT", frame.acceptButton, "RIGHT", 12, 0)
+    frame.acceptButton:SetText(options.acceptText or ACCEPT or "OK")
+    frame.cancelButton:SetText(options.cancelText or CANCEL or "Abbrechen")
+    y = y - DIALOG_BUTTON_HEIGHT
+
+    frame:SetHeight(math.max(104, -y + 18))
+end
+
+local function closeDialog(frame, accepted)
+    frame.accepted = accepted and true or false
+    frame:Hide()
+end
+
+local function acceptDialog(frame)
+    local options = frame.options or {}
+    local value = options.hasEditBox and frame.editBox:GetText() or nil
+    if options.onAccept then
+        local accepted, errorMessage = options.onAccept(value, options.data, frame)
+        if accepted == false then
+            frame.errorMessage = errorMessage or "Eingabe ungültig"
+            layoutDialog(frame)
+            if options.hasEditBox then
+                frame.editBox:SetFocus()
+                frame.editBox:HighlightText()
+            end
+            return
+        end
+    end
+    closeDialog(frame, true)
+end
+
+local function createDialogFrame()
+    local frame = CreateFrame("Frame", "DudesUtilsDialogFrame", UIParent)
+    frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    frame:SetFrameStrata("FULLSCREEN_DIALOG")
+    frame:SetFrameLevel(100)
+    frame:SetMovable(true)
+    frame:SetClampedToScreen(true)
+    frame:SetToplevel(true)
+    frame:EnableMouse(true)
+    frame:EnableMouseWheel(true)
+    frame:RegisterForDrag("LeftButton")
+    setDialogBackdrop(frame, 0.025, 0.03, 0.04, 1)
+
+    frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    frame.title:SetJustifyH("CENTER")
+    frame.title:SetTextColor(1, 1, 1)
+    frame.title:SetWordWrap(true)
+    if frame.title.SetNonSpaceWrap then
+        frame.title:SetNonSpaceWrap(true)
+    end
+
+    frame.message = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    frame.message:SetJustifyH("CENTER")
+    frame.message:SetTextColor(1, 1, 1)
+    frame.message:SetWordWrap(true)
+    if frame.message.SetNonSpaceWrap then
+        frame.message:SetNonSpaceWrap(true)
+    end
+
+    frame.editBox = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
+    frame.editBox:SetHeight(24)
+    frame.editBox:SetAutoFocus(false)
+    frame.editBox:SetFontObject(ChatFontNormal)
+    frame.editBox:SetTextInsets(6, 6, 0, 0)
+
+    frame.errorText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    frame.errorText:SetJustifyH("LEFT")
+    frame.errorText:SetTextColor(1, 0.25, 0.18)
+    frame.errorText:SetWordWrap(true)
+    if frame.errorText.SetNonSpaceWrap then
+        frame.errorText:SetNonSpaceWrap(true)
+    end
+
+    frame.acceptButton = createDialogButton(frame)
+    frame.cancelButton = createDialogButton(frame)
+
+    frame.acceptButton:SetScript("OnClick", function()
+        acceptDialog(frame)
+    end)
+    frame.cancelButton:SetScript("OnClick", function()
+        closeDialog(frame, false)
+    end)
+    frame.editBox:SetScript("OnEnterPressed", function()
+        acceptDialog(frame)
+    end)
+    frame.editBox:SetScript("OnEscapePressed", function()
+        closeDialog(frame, false)
+    end)
+    frame:SetScript("OnDragStart", function(self)
+        self:StartMoving()
+    end)
+    frame:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+    end)
+    frame:SetScript("OnMouseWheel", function(self, delta)
+        if IsControlKeyDown and IsControlKeyDown() then
+            dialogScale = clampDialogValue(dialogScale + delta * 0.05, 0.5, 2)
+            self:SetScale(dialogScale)
+        end
+    end)
+    frame:SetScript("OnHide", function(self)
+        local options = self.options
+        local accepted = self.accepted
+        self.options = nil
+        self.errorMessage = nil
+        self.accepted = nil
+        self.editBox:ClearFocus()
+        if options and not accepted and options.onCancel then
+            options.onCancel(options.data, self)
+        end
+    end)
+
+    if UISpecialFrames and not DudesUtils.Array.Contains(UISpecialFrames, frame:GetName()) then
+        table.insert(UISpecialFrames, frame:GetName())
+    end
+    frame:Hide()
+    return frame
+end
+
+function DudesUtils.Dialog.Show(options)
+    options = options or {}
+    dialogFrame = dialogFrame or createDialogFrame()
+    if dialogFrame:IsShown() then
+        dialogFrame:Hide()
+    end
+    dialogFrame.options = options
+    dialogFrame.accepted = nil
+    dialogFrame.errorMessage = options.errorText
+    dialogFrame:SetScale(dialogScale)
+    dialogFrame.editBox:SetMaxLetters(tonumber(options.maxLetters) or 0)
+    dialogFrame.editBox:SetText(options.inputText or "")
+    layoutDialog(dialogFrame)
+    dialogFrame:Show()
+    if options.hasEditBox then
+        dialogFrame.editBox:SetFocus()
+        if options.highlightInput ~= false then
+            dialogFrame.editBox:HighlightText()
+        end
+    end
+    return dialogFrame
+end
+
+function DudesUtils.Dialog.Hide()
+    if dialogFrame and dialogFrame:IsShown() then
+        closeDialog(dialogFrame, false)
     end
 end

@@ -2,6 +2,7 @@ DudesFlexFrames = DudesFlexFrames or {}
 DudesFlexFrames_Positions = DudesFlexFrames_Positions or {}
 DudesFlexFrames_Scales = DudesFlexFrames_Scales or {}
 DudesFlexFrames_Settings = DudesFlexFrames_Settings or {}
+DudesFlexFrames_CharacterSettings = DudesFlexFrames_CharacterSettings or {}
 DudesFlexFrames_ActiveRolls = DudesFlexFrames_ActiveRolls or {}
 
 local NO_DRAG_TARGETS = {}
@@ -60,17 +61,76 @@ local scaleFrameNames = {
 	"DressUpModel"
 }
 
-local function getSettings()
+local function mergeDefaultSettings(settings)
 	for key, value in pairs(DEFAULT_SETTINGS) do
-		if DudesFlexFrames_Settings[key] == nil then
-			DudesFlexFrames_Settings[key] = value
+		if settings[key] == nil then
+			settings[key] = value
 		end
+	end
+	return settings
+end
+
+local function getCharacterSettingsProfile()
+	local realmName = GetRealmName and (GetRealmName() or "UnknownRealm") or "UnknownRealm"
+	local characterName = UnitName and (UnitName("player") or "UnknownCharacter") or "UnknownCharacter"
+	DudesFlexFrames_CharacterSettings[realmName] = DudesFlexFrames_CharacterSettings[realmName] or {}
+	local realm = DudesFlexFrames_CharacterSettings[realmName]
+	realm[characterName] = realm[characterName] or {
+		useCharacterSettings = false,
+		settings = {},
+		positions = {},
+		scales = {}
+	}
+	realm[characterName].settings = realm[characterName].settings or {}
+	realm[characterName].positions = realm[characterName].positions or {}
+	realm[characterName].scales = realm[characterName].scales or {}
+	return realm[characterName]
+end
+
+local function getPositions()
+	local profile = getCharacterSettingsProfile()
+	return profile.useCharacterSettings and profile.positions or DudesFlexFrames_Positions
+end
+
+local function getScales()
+	local profile = getCharacterSettingsProfile()
+	return profile.useCharacterSettings and profile.scales or DudesFlexFrames_Scales
+end
+
+local function getSettings()
+	mergeDefaultSettings(DudesFlexFrames_Settings)
+	local profile = getCharacterSettingsProfile()
+	if profile.useCharacterSettings then
+		return mergeDefaultSettings(profile.settings)
 	end
 	return DudesFlexFrames_Settings
 end
 
 function DudesFlexFrames.GetSettings()
 	return getSettings()
+end
+
+function DudesFlexFrames.UsesCharacterSpecificSettings()
+	return getCharacterSettingsProfile().useCharacterSettings and true or false
+end
+
+function DudesFlexFrames.SetCharacterSpecificSettings(enabled)
+	local profile = getCharacterSettingsProfile()
+	enabled = enabled and true or false
+	if profile.useCharacterSettings == enabled then
+		return false
+	end
+	mergeDefaultSettings(DudesFlexFrames_Settings)
+	profile.settings = DudesUtils.Table.Copy(DudesFlexFrames_Settings)
+	profile.positions = DudesUtils.Table.Copy(DudesFlexFrames_Positions)
+	profile.scales = DudesUtils.Table.Copy(DudesFlexFrames_Scales)
+	profile.useCharacterSettings = enabled
+	-- Existing Blizzard frames retain their position and scale after changing
+	-- the backing profile. Reloading applies the selected profile consistently.
+	if ReloadUI then
+		ReloadUI()
+	end
+	return true
 end
 
 local function getGroupLootSpacing()
@@ -247,7 +307,7 @@ local function savePosition(frame)
 	local point, _, relPoint, xOfs, yOfs = frame:GetPoint()
 	
 	if name and point then
-		DudesFlexFrames_Positions[name] = {point, relPoint, xOfs, yOfs}
+		getPositions()[name] = {point, relPoint, xOfs, yOfs}
 	end
 end
 
@@ -256,14 +316,14 @@ local function saveScale(frame)
 	local scale = frame:GetScale()
 	
 	if name and scale then
-		DudesFlexFrames_Scales[name] = scale
+		getScales()[name] = scale
 	end
 end
 
 
 local function loadPosition(frame)
 	local name = frame:GetName()
-	local pos = name and DudesFlexFrames_Positions[name]
+	local pos = name and getPositions()[name]
 	
 	if pos then
 		frame:ClearAllPoints()
@@ -273,7 +333,7 @@ end
 
 local function loadScale(frame)
 	local name = frame:GetName()
-	local scale = name and DudesFlexFrames_Scales[name]
+	local scale = name and getScales()[name]
 
 	if scale then
 		frame:SetScale(scale)
@@ -384,10 +444,12 @@ end
 
 local function onConfirmLootRoll(_, rollId, rollType)
 	if getSettings().autoConfirmBindOnPickup and ConfirmLootRoll and rollId and rollType then
-		ConfirmLootRoll(rollId, rollType)
-		if StaticPopup_Hide then
-			StaticPopup_Hide("CONFIRM_LOOT_ROLL")
+		if DudesLootTracker
+			and DudesLootTracker.OwnsLootRollConfirmation
+			and DudesLootTracker.OwnsLootRollConfirmation(rollId, rollType) then
+			return
 		end
+		ConfirmLootRoll(rollId, rollType)
 	end
 end
 
@@ -423,8 +485,14 @@ local function resetFrame(frame)
 end
 
 function DudesFlexFrames.ResetFrames()
-	DudesFlexFrames_Positions = {}
-	DudesFlexFrames_Scales = {}
+	local positions = getPositions()
+	local scales = getScales()
+	for key in pairs(positions) do
+		positions[key] = nil
+	end
+	for key in pairs(scales) do
+		scales[key] = nil
+	end
 
 	for flexFrameName in pairs(flexFrameNames) do
 		resetFrame(_G[flexFrameName])

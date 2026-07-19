@@ -7,6 +7,7 @@ local ROLL_TYPE_PASS = 0
 local bindTooltip
 local PRIMORDIAL_SARONITE_ITEM_ID = 49908
 local pendingAutoConfirmRolls = {}
+local ownedAutoConfirmRolls = {}
 local pendingRollItems = {}
 local registeredRollHook
 local handleConfirmLootRoll
@@ -112,19 +113,15 @@ local function performRollAction(rollId, item, action)
     end
     if performedAction ~= "pass" then
         pendingAutoConfirmRolls[rollId] = rollType
+        ownedAutoConfirmRolls[rollId] = {
+            rollType = rollType,
+            expiresAt = (GetTime and GetTime() or 0) + 120,
+        }
     end
     if performedAction ~= "pass" and ADDON.SetPendingLootDecision then
         ADDON.SetPendingLootDecision(item, performedAction)
     end
     RollOnLoot(rollId, rollType)
-    if performedAction ~= "pass" then
-        handleConfirmLootRoll(rollId, rollType)
-        if C_Timer and C_Timer.After then
-            C_Timer.After(0, function()
-                handleConfirmLootRoll(rollId, rollType)
-            end)
-        end
-    end
     ADDON.Print("Auto-" .. tostring(ACTION_LABELS[performedAction] or performedAction) .. " auf Loot: " .. (item.link or item.name or "Item"))
     return true
 end
@@ -136,9 +133,18 @@ handleConfirmLootRoll = function(rollId, rollType)
     end
     ConfirmLootRoll(rollId, rollType)
     pendingAutoConfirmRolls[rollId] = nil
-    if StaticPopup_Hide then
-        StaticPopup_Hide("CONFIRM_LOOT_ROLL")
+end
+
+function ADDON.OwnsLootRollConfirmation(rollId, rollType)
+    local owned = rollId and ownedAutoConfirmRolls[rollId]
+    if not owned or owned.rollType ~= rollType then
+        return false
     end
+    if GetTime and owned.expiresAt and owned.expiresAt < GetTime() then
+        ownedAutoConfirmRolls[rollId] = nil
+        return false
+    end
+    return true
 end
 
 local function getAutomationAction(item)
@@ -206,6 +212,7 @@ function ADDON.InitializeAutoRoll()
     DudesUtils.EventHandler.Add("CANCEL_LOOT_ROLL", function(_, rollId)
         if rollId then
             pendingAutoConfirmRolls[rollId] = nil
+            ownedAutoConfirmRolls[rollId] = nil
             pendingRollItems[rollId] = nil
         end
     end)

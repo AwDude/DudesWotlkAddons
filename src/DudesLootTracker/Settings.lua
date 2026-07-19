@@ -212,10 +212,23 @@ local function createOptionsPanel()
     title:SetText("Dude's Loot Tracker")
     local subtitle = createText(content, 11)
     subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
-    subtitle:SetText("Loot und Anzeige-Regeln pro Charakter")
+    subtitle:SetText("Loot- und Anzeige-Einstellungen")
     subtitle:SetTextColor(0.8, 0.8, 0.8)
 
-    local c = createCheckbox(content, subtitle, -18, "Minimap Button anzeigen", function() return ADDON.GetSettings().showMinimapButton end, function(value) ADDON.GetSettings().showMinimapButton = value refreshMinimapButton() end)
+    local c = createCheckbox(content, subtitle, -18, "Charakterspezifische Einstellungen", function()
+        return ADDON.UsesCharacterSpecificSettings()
+    end, function(value)
+        ADDON.SetCharacterSpecificSettings(value)
+        if ADDON.ApplySettingsProfile then
+            ADDON.ApplySettingsProfile()
+        end
+        if ADDON.PruneHistory then
+            ADDON.PruneHistory()
+        end
+        ADDON.RefreshSettings()
+    end)
+    table.insert(optionsPanel.controls, c)
+    c = createCheckbox(content, c, -8, "Minimap Button anzeigen", function() return ADDON.GetSettings().showMinimapButton end, function(value) ADDON.GetSettings().showMinimapButton = value refreshMinimapButton() end)
     table.insert(optionsPanel.controls, c)
     c = createCheckbox(content, c, -8, "Würfel Automation beim Betreten einer Instanz anzeigen", function() return ADDON.GetSettings().showAutomationDialogOnInstanceEnter end, function(value) ADDON.GetSettings().showAutomationDialogOnInstanceEnter = value end)
     table.insert(optionsPanel.controls, c)

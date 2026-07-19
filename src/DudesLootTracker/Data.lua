@@ -12,6 +12,14 @@ local QUALITY_COLORS = {
     [7] = "e6cc80",
 }
 
+local EMBLEM_ITEM_IDS = {
+    [40752] = true, -- Emblem of Heroism
+    [40753] = true, -- Emblem of Valor
+    [45624] = true, -- Emblem of Conquest
+    [47241] = true, -- Emblem of Triumph
+    [49426] = true, -- Emblem of Frost
+}
+
 local function parseItemId(link)
     if not link then
         return nil
@@ -79,6 +87,16 @@ function ADDON.GetItemId(link)
     return parseItemId(link)
 end
 
+function ADDON.IsEmblem(itemOrLink)
+    local itemId
+    if type(itemOrLink) == "table" then
+        itemId = tonumber(itemOrLink.itemId) or parseItemId(itemOrLink.link)
+    else
+        itemId = parseItemId(itemOrLink)
+    end
+    return itemId and EMBLEM_ITEM_IDS[itemId] and true or false
+end
+
 function ADDON.GetItemDisplayName(link)
     local name = parseItemName(link)
     if (not name or name == "") and GetItemInfo then
@@ -110,6 +128,7 @@ function ADDON.BuildItem(link, count)
         bindInfoReady = false,
         itemType = itemType or "",
         itemSubType = itemSubType or "",
+        isEmblem = EMBLEM_ITEM_IDS[parseItemId(link)] and true or false,
         texture = texture or "Interface\\Icons\\INV_Misc_QuestionMark",
         infoReady = name and true or false,
         count = count or 1,
@@ -133,6 +152,7 @@ function ADDON.RefreshItemInfo(item)
     item.requiredLevel = requiredLevel or item.requiredLevel
     item.itemType = itemType or item.itemType
     item.itemSubType = itemSubType or item.itemSubType
+    item.isEmblem = EMBLEM_ITEM_IDS[item.itemId] and true or false
     item.equipLoc = itemEquipLoc or item.equipLoc
     item.isEquipment = itemEquipLoc and itemEquipLoc ~= "" and itemEquipLoc ~= "INVTYPE_NON_EQUIP" or item.isEquipment
     item.slot = (itemEquipLoc and _G[itemEquipLoc]) or item.slot

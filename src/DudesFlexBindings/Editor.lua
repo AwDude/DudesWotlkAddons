@@ -27,8 +27,6 @@ local bagItemClickHooked
 local inventoryItemClickHooked
 local companionClickHooked
 local pickerBindingKey
-local pendingActionMove
-local pendingBonusBarMove
 local refreshSuggestions
 local refreshMacroLockState
 local setEditorMode
@@ -297,17 +295,6 @@ local function styleButton(button)
     if button:GetFontString() then
         button:GetFontString():SetTextColor(0.86, 0.92, 1)
     end
-end
-
-local function stylePopupButtons(popup)
-    if not popup or not popup.GetName then
-        return
-    end
-
-    local name = popup:GetName()
-    styleButton(_G[name .. "Button1"])
-    styleButton(_G[name .. "Button2"])
-    styleButton(_G[name .. "Button3"])
 end
 
 local function getVisibleIconRowCount()
@@ -1231,50 +1218,21 @@ local function createEditorBindingSizeControl(parent)
     return control
 end
 
-local function showDisableCharacterBindingsDialog(onAccept, onCancel)
-    StaticPopupDialogs["DUDES_FLEX_BINDINGS_DISABLE_CHARACTER_BINDINGS"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_DISABLE_CHARACTER_BINDINGS"] or {
-        text = "Charakterspezifische Interface Belegungen deaktivieren?\n\nAlle aktuellen charakterspezifischen Interface Belegungen gehen verloren.\n\nMakros und Bonusleisten-Belegungen können deaktiviert werden, wenn danach eine Interface-Aktion auf derselben Taste liegt.",
-        button1 = "Deaktivieren",
-        button2 = "Abbrechen",
-        OnAccept = function(self)
-            if self.data and self.data.onAccept then
-                self.data.onAccept()
-            end
-        end,
-        OnCancel = function(self)
-            if self.data and self.data.onCancel then
-                self.data.onCancel()
-            end
-        end,
-        timeout = 0,
-        whileDead = true,
-        hideOnEscape = true,
-        preferredIndex = 3,
-    }
-    StaticPopup_Show("DUDES_FLEX_BINDINGS_DISABLE_CHARACTER_BINDINGS", nil, nil, {
-        onAccept = onAccept,
-        onCancel = onCancel,
-    })
-end
-
 local function showResetKeyDialog()
-    StaticPopupDialogs["DUDES_FLEX_BINDINGS_RESET_KEY"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_RESET_KEY"] or {
-        text = "Taste \"%s\" zurücksetzen?\n\nInterface-Belegung, Makro und Bonusleisten-Belegung dieser Taste werden entfernt.",
-        button1 = "Zurücksetzen",
-        button2 = "Abbrechen",
-        OnAccept = function(self)
-            if self.data and self.data.key and ADDON.ClearAllBindingsForKey then
-                ADDON.ClearAllBindingsForKey(self.data.key)
+    DudesUtils.Dialog.Show({
+        title = string.format("Taste \"%s\" zurücksetzen?", tostring(currentKey or "")),
+        text = "Interface-Belegung, Makro und Bonusleisten-Belegung dieser Taste werden entfernt.",
+        acceptText = "Zurücksetzen",
+        cancelText = "Abbrechen",
+        data = { key = currentKey },
+        onAccept = function(_, data)
+            if data.key and ADDON.ClearAllBindingsForKey then
+                ADDON.ClearAllBindingsForKey(data.key)
                 macroDirty = nil
-                ADDON.OpenEditor(self.data.key)
+                ADDON.OpenEditor(data.key)
             end
         end,
-        timeout = 0,
-        whileDead = true,
-        hideOnEscape = true,
-        preferredIndex = 3,
-    }
-    StaticPopup_Show("DUDES_FLEX_BINDINGS_RESET_KEY", currentKey or "", nil, { key = currentKey })
+    })
 end
 
 local function getBindingKeyDisplayText(bindingKey)
@@ -1327,9 +1285,6 @@ setEditorMode = function(mode)
 
     showFrame(editor.interfaceTitle, showInterface)
     showFrame(editor.interfaceLockWarning, showInterface and editor.macroLocked)
-    showFrame(editor.characterBindingCheckbox, showInterface)
-    showFrame(editor.characterBindingCheckboxText, showInterface)
-    showFrame(editor.characterBindingCheckboxClickArea, showInterface)
     showFrame(editor.actionListTitle, showInterface)
     showFrame(editor.actionFilter, showInterface)
     showFrame(editor.actionPrevButton, showInterface and editor.actionPrevButton and editor.actionPrevButton.hasPages)
@@ -1438,10 +1393,6 @@ setEditorMode = function(mode)
 end
 
 local function refreshInterfaceRows()
-    if editor and editor.characterBindingCheckbox and ADDON.IsCharacterBindingSetEnabled then
-        editor.characterBindingCheckbox:SetChecked(ADDON.IsCharacterBindingSetEnabled())
-    end
-
     local variants = ADDON.GetDefaultBindingKeysForKey(currentKey)
     for i, row in ipairs(interfaceRows) do
         local variant = variants[i]
@@ -1503,42 +1454,26 @@ local function confirmAndApplyAction(bindingKey, action, conflict)
         return
     end
 
-    StaticPopupDialogs["DUDES_FLEX_BINDINGS_MOVE_BINDING"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_MOVE_BINDING"] or {
-        text = "Diese Aktion ist bereits gebunden an:\n%s\n\nVon dort lösen und hier binden?",
-        button1 = "Lösen",
-        button2 = "Abbrechen",
-        OnAccept = function()
-            if not pendingActionMove then
-                return
+    DudesUtils.Dialog.Show({
+        title = "Belegung verschieben?",
+        text = "Diese Aktion ist bereits gebunden an:\n" .. tostring(conflict.bindingKey or conflict.text or "") .. "\n\nVon dort lösen und hier binden?",
+        acceptText = "Lösen",
+        cancelText = "Abbrechen",
+        data = {
+            bindingKey = bindingKey,
+            action = action,
+            conflict = conflict,
+        },
+        onAccept = function(_, data)
+            if data.conflict and data.conflict.bindingKey then
+                ADDON.ClearDefaultBindingAction(data.conflict.bindingKey)
             end
-            if pendingActionMove.conflict and pendingActionMove.conflict.bindingKey then
-                ADDON.ClearDefaultBindingAction(pendingActionMove.conflict.bindingKey)
-            end
-            applyActionToRow(pendingActionMove.bindingKey, pendingActionMove.action)
-            pendingActionMove = nil
+            applyActionToRow(data.bindingKey, data.action)
             if actionPicker then
                 actionPicker:Hide()
             end
         end,
-        OnCancel = function()
-            pendingActionMove = nil
-        end,
-        timeout = 0,
-        whileDead = 1,
-        hideOnEscape = 1,
-    }
-
-    pendingActionMove = {
-        bindingKey = bindingKey,
-        action = action,
-        conflict = conflict,
-    }
-    local popup = StaticPopup_Show("DUDES_FLEX_BINDINGS_MOVE_BINDING", conflict.bindingKey or conflict.text or "")
-    if popup then
-        popup:SetFrameStrata("TOOLTIP")
-        popup:SetFrameLevel(PICKER_FRAME_LEVEL + 20)
-        stylePopupButtons(popup)
-    end
+    })
 end
 
 local function setBonusBarRowLocked(row, locked)
@@ -1575,39 +1510,23 @@ local function confirmAndApplyBonusBarSlot(bindingKey, slot, conflict)
         return
     end
 
-    StaticPopupDialogs["DUDES_FLEX_BINDINGS_MOVE_BONUS_BAR_BINDING"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_MOVE_BONUS_BAR_BINDING"] or {
-        text = "Bonusleisten-Aktion %s ist bereits gebunden an:\n%s\n\nVon dort lösen und hier binden?",
-        button1 = "Lösen",
-        button2 = "Abbrechen",
-        OnAccept = function()
-            if not pendingBonusBarMove then
-                return
+    DudesUtils.Dialog.Show({
+        title = "Bonusleisten-Belegung verschieben?",
+        text = "Bonusleisten-Aktion " .. tostring(slot or "") .. " ist bereits gebunden an:\n" .. tostring(conflict.bindingKey or "") .. "\n\nVon dort lösen und hier binden?",
+        acceptText = "Lösen",
+        cancelText = "Abbrechen",
+        data = {
+            bindingKey = bindingKey,
+            slot = slot,
+            conflict = conflict,
+        },
+        onAccept = function(_, data)
+            if data.conflict and data.conflict.bindingKey and ADDON.ClearBonusBarBindingAction then
+                ADDON.ClearBonusBarBindingAction(data.conflict.bindingKey)
             end
-            if pendingBonusBarMove.conflict and pendingBonusBarMove.conflict.bindingKey and ADDON.ClearBonusBarBindingAction then
-                ADDON.ClearBonusBarBindingAction(pendingBonusBarMove.conflict.bindingKey)
-            end
-            applyBonusBarSlotToRow(pendingBonusBarMove.bindingKey, pendingBonusBarMove.slot)
-            pendingBonusBarMove = nil
+            applyBonusBarSlotToRow(data.bindingKey, data.slot)
         end,
-        OnCancel = function()
-            pendingBonusBarMove = nil
-        end,
-        timeout = 0,
-        whileDead = 1,
-        hideOnEscape = 1,
-    }
-
-    pendingBonusBarMove = {
-        bindingKey = bindingKey,
-        slot = slot,
-        conflict = conflict,
-    }
-    local popup = StaticPopup_Show("DUDES_FLEX_BINDINGS_MOVE_BONUS_BAR_BINDING", tostring(slot or ""), conflict.bindingKey or "")
-    if popup then
-        popup:SetFrameStrata("TOOLTIP")
-        popup:SetFrameLevel(PICKER_FRAME_LEVEL + 20)
-        stylePopupButtons(popup)
-    end
+    })
 end
 
 local function selectBonusBarSlot(row, slot)
@@ -1765,9 +1684,6 @@ refreshBonusBarEditorSettingsControls = function()
     local settings = ADDON.GetBonusBarSettings()
     local enabled = settings.showBonusBar and true or false
 
-    if editor.characterBonusBarSettingsCheckbox then
-        editor.characterBonusBarSettingsCheckbox:SetChecked(ADDON.IsCharacterBonusBarSettingsEnabled and ADDON.IsCharacterBonusBarSettingsEnabled() or false)
-    end
     if editor.bonusBarShowCheckbox then
         editor.bonusBarShowCheckbox:SetChecked(enabled)
     end
@@ -2242,7 +2158,7 @@ local function createInterfaceRow(parent, index)
     local row = CreateFrame("Button", nil, parent)
     row:SetWidth(594)
     row:SetHeight(BINDING_ROW_HEIGHT)
-    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 22, -166 - (index - 1) * BINDING_ROW_STEP)
+    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 22, SECTION_CONTENT_Y - (index - 1) * BINDING_ROW_STEP)
     addShadow(row)
     setBackdrop(row, 0.085, 0.098, 0.12, 1)
 
@@ -2834,53 +2750,6 @@ local function createEditor()
     setHeadingText(interfaceTitle)
     editor.interfaceTitle = interfaceTitle
 
-    editor.characterBindingCheckbox = CreateFrame("CheckButton", nil, editor, "UICheckButtonTemplate")
-    editor.characterBindingCheckbox:SetWidth(20)
-    editor.characterBindingCheckbox:SetHeight(20)
-    editor.characterBindingCheckbox:SetPoint("TOPLEFT", editor, "TOPLEFT", 22, SECTION_CONTENT_Y + 2)
-    styleButton(editor.characterBindingCheckbox)
-    editor.characterBindingCheckbox:SetScript("OnClick", function(self)
-        local enabled = self:GetChecked() and true or false
-        if not enabled and ADDON.IsCharacterBindingSetEnabled and ADDON.IsCharacterBindingSetEnabled() then
-            self:SetChecked(true)
-            showDisableCharacterBindingsDialog(function()
-                ADDON.SetCharacterBindingSetEnabled(false)
-                self:SetChecked(ADDON.IsCharacterBindingSetEnabled and ADDON.IsCharacterBindingSetEnabled() or false)
-                refreshInterfaceRows()
-                refreshMacroLockState()
-            end, function()
-                self:SetChecked(ADDON.IsCharacterBindingSetEnabled and ADDON.IsCharacterBindingSetEnabled() or false)
-            end)
-            return
-        end
-        if not ADDON.SetCharacterBindingSetEnabled(enabled) then
-            self:SetChecked(ADDON.IsCharacterBindingSetEnabled and ADDON.IsCharacterBindingSetEnabled() or false)
-            return
-        end
-        self:SetChecked(ADDON.IsCharacterBindingSetEnabled and ADDON.IsCharacterBindingSetEnabled() or false)
-        refreshInterfaceRows()
-    end)
-    editor.characterBindingCheckboxText = createText(editor, 11, "LEFT")
-    editor.characterBindingCheckboxText:SetPoint("LEFT", editor.characterBindingCheckbox, "RIGHT", 6, 0)
-    editor.characterBindingCheckboxText:SetPoint("RIGHT", editor, "RIGHT", -24, 0)
-    editor.characterBindingCheckboxText:SetHeight(18)
-    editor.characterBindingCheckboxText:SetText("Charakterspezifische Interface Belegungen")
-    editor.characterBindingCheckboxText:SetTextColor(0.86, 0.9, 0.95)
-    if editor.characterBindingCheckboxText.SetNonSpaceWrap then
-        editor.characterBindingCheckboxText:SetNonSpaceWrap(false)
-    end
-    if editor.characterBindingCheckboxText.SetWordWrap then
-        editor.characterBindingCheckboxText:SetWordWrap(false)
-    end
-
-    editor.characterBindingCheckboxClickArea = CreateFrame("Button", nil, editor)
-    editor.characterBindingCheckboxClickArea:SetPoint("LEFT", editor.characterBindingCheckboxText, "LEFT", 0, 0)
-    editor.characterBindingCheckboxClickArea:SetPoint("RIGHT", editor.characterBindingCheckboxText, "RIGHT", 0, 0)
-    editor.characterBindingCheckboxClickArea:SetHeight(20)
-    editor.characterBindingCheckboxClickArea:SetScript("OnClick", function()
-        editor.characterBindingCheckbox:Click()
-    end)
-
     editor.interfaceLockWarning = createText(editor, 10)
     editor.interfaceLockWarning:SetPoint("LEFT", interfaceTitle, "RIGHT", 14, 0)
     editor.interfaceLockWarning:SetPoint("RIGHT", editor, "RIGHT", -24, 0)
@@ -2911,21 +2780,12 @@ local function createEditor()
     editor.bonusSettingsTitle:SetText("Bonusleisten Anzeige")
     setHeadingText(editor.bonusSettingsTitle)
 
-    editor.characterBonusBarSettingsCheckbox = createEditorCheckbox(editor, "Charakterspezifische Bonusleisten Einstellungen", function()
-        return ADDON.IsCharacterBonusBarSettingsEnabled and ADDON.IsCharacterBonusBarSettingsEnabled()
-    end, function(value)
-        if ADDON.SetCharacterBonusBarSettingsEnabled then
-            return ADDON.SetCharacterBonusBarSettingsEnabled(value)
-        end
-    end)
-    editor.characterBonusBarSettingsCheckbox:SetPoint("TOPLEFT", editor.bonusSettingsTitle, "BOTTOMLEFT", 0, -10)
-
     editor.bonusBarShowCheckbox = createEditorCheckbox(editor, "Bonusleiste anzeigen", function()
         return ADDON.GetBonusBarSettings().showBonusBar
     end, function(value)
         ADDON.GetBonusBarSettings().showBonusBar = value
     end)
-    editor.bonusBarShowCheckbox:SetPoint("TOPLEFT", editor.characterBonusBarSettingsCheckbox, "BOTTOMLEFT", 0, -4)
+    editor.bonusBarShowCheckbox:SetPoint("TOPLEFT", editor.bonusSettingsTitle, "BOTTOMLEFT", 0, -10)
 
     editor.bonusBarAlignCheckbox = createEditorCheckbox(editor, "Bonusleiste ausrichten", function()
         return ADDON.GetBonusBarSettings().alignBonusBar
@@ -2961,7 +2821,6 @@ local function createEditor()
     end)
     editor.bonusBarClickButtonsCheckbox:SetPoint("TOPLEFT", editor.bonusBarShowTooltipsCheckbox, "BOTTOMLEFT", 0, -4)
     editor.bonusSettingsCheckboxes = {
-        editor.characterBonusBarSettingsCheckbox,
         editor.bonusBarShowCheckbox,
         editor.bonusBarAlignCheckbox,
         editor.bonusBarAnchorSelector,

@@ -98,17 +98,6 @@ local function styleButton(button)
     end
 end
 
-local function stylePopupButtons(popup)
-    if not popup or not popup.GetName then
-        return
-    end
-
-    local name = popup:GetName()
-    styleButton(_G[name .. "Button1"])
-    styleButton(_G[name .. "Button2"])
-    styleButton(_G[name .. "Button3"])
-end
-
 local function getAngleFromDelta(y, x)
     local atan2 = math.atan2 or _G.atan2
     if atan2 then
@@ -130,7 +119,7 @@ local function refreshMinimapButton()
         return
     end
 
-    if ADDON.GetSettings().showMinimapButton then
+    if ADDON.GetSyncedSetting("showMinimapButton") then
         positionMinimapButton()
         minimapButton:Show()
     else
@@ -336,14 +325,11 @@ local function refreshBonusBarSettingsControls()
         showFrame(optionsPanel.bonusBarBindingSizeControl, enabled and bonusSettings.showBonusBarBindings)
         showFrame(optionsPanel.bonusBarBindingSizeControl.text, enabled and bonusSettings.showBonusBarBindings)
     end
-    if optionsPanel.characterInterfaceBindingsCheckbox and ADDON.IsCharacterBindingSetEnabled then
-        optionsPanel.characterInterfaceBindingsCheckbox:SetChecked(ADDON.IsCharacterBindingSetEnabled())
-    end
-    if optionsPanel.characterBonusBarSettingsCheckbox and ADDON.IsCharacterBonusBarSettingsEnabled then
-        optionsPanel.characterBonusBarSettingsCheckbox:SetChecked(ADDON.IsCharacterBonusBarSettingsEnabled())
+    if optionsPanel.characterSpecificSettingsCheckbox and ADDON.IsCharacterSpecificSettingsEnabled then
+        optionsPanel.characterSpecificSettingsCheckbox:SetChecked(ADDON.IsCharacterSpecificSettingsEnabled())
     end
     if optionsPanel.triggerOnKeyDownCheckbox then
-        optionsPanel.triggerOnKeyDownCheckbox:SetChecked(settings.triggerOnKeyDown and true or false)
+        optionsPanel.triggerOnKeyDownCheckbox:SetChecked(ADDON.GetSyncedSetting("triggerOnKeyDown") and true or false)
     end
 end
 
@@ -625,121 +611,44 @@ local function createBindingSizeControl(parent, anchor, yOffset)
 end
 
 local function showDisableCharacterBindingsDialog(onAccept, onCancel)
-    StaticPopupDialogs["DUDES_FLEX_BINDINGS_DISABLE_CHARACTER_BINDINGS"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_DISABLE_CHARACTER_BINDINGS"] or {
-        text = "Charakterspezifische Interface Belegungen deaktivieren?\n\nAlle aktuellen charakterspezifischen Interface Belegungen gehen verloren.\n\nMakros und Bonusleisten-Belegungen können deaktiviert werden, wenn danach eine Interface-Aktion auf derselben Taste liegt.",
-        button1 = "Deaktivieren",
-        button2 = "Abbrechen",
-        OnAccept = function(self)
-            if self.data and self.data.onAccept then
-                self.data.onAccept()
+    DudesUtils.Dialog.Show({
+        title = "Charakterspezifische Einstellungen deaktivieren?",
+        text = "Danach werden die gemeinsamen Interface-Belegungen, Bonusleisten-Einstellungen, Minimap-Sichtbarkeit und das gemeinsame Auslöseverhalten verwendet.",
+        acceptText = "Deaktivieren",
+        cancelText = "Abbrechen",
+        onAccept = function()
+            if onAccept then
+                onAccept()
             end
         end,
-        OnCancel = function(self)
-            if self.data and self.data.onCancel then
-                self.data.onCancel()
+        onCancel = function()
+            if onCancel then
+                onCancel()
             end
         end,
-        timeout = 0,
-        whileDead = true,
-        hideOnEscape = true,
-        preferredIndex = 3,
-    }
-    StaticPopup_Show("DUDES_FLEX_BINDINGS_DISABLE_CHARACTER_BINDINGS", nil, nil, {
-        onAccept = onAccept,
-        onCancel = onCancel,
     })
 end
 
-local function raiseSettingsPopup(popup)
-    if not popup then
-        return
-    end
-    popup:SetFrameStrata("TOOLTIP")
-    popup:SetFrameLevel(100)
-    stylePopupButtons(popup)
-end
-
-local function showSaveLayoutError(popup, message)
-    if not popup then
-        return
-    end
-    if not popup.saveLayoutErrorText then
-        popup.saveLayoutErrorText = popup:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        popup.saveLayoutErrorText:SetPoint("TOPLEFT", popup.editBox, "BOTTOMLEFT", 0, -6)
-        popup.saveLayoutErrorText:SetPoint("TOPRIGHT", popup.editBox, "BOTTOMRIGHT", 0, -6)
-        popup.saveLayoutErrorText:SetJustifyH("LEFT")
-        popup.saveLayoutErrorText:SetTextColor(1, 0.25, 0.18)
-    end
-    popup.saveLayoutErrorText:SetText(message or "")
-    popup.saveLayoutErrorText:Show()
-    if popup.saveLayoutBaseHeight then
-        popup:SetHeight(popup.saveLayoutBaseHeight + 18)
-    end
-end
-
-local function hideSaveLayoutError(popup)
-    if popup and popup.saveLayoutErrorText then
-        popup.saveLayoutErrorText:Hide()
-    end
-    if popup and popup.saveLayoutBaseHeight then
-        popup:SetHeight(popup.saveLayoutBaseHeight)
-    end
-end
-
-local function saveLayoutFromDialog(popup)
-    if not popup then
-        return false
-    end
-    local name = popup.editBox and popup.editBox:GetText() or ""
+local function saveLayoutFromDialog(name)
     if ADDON.SaveAppliedLayoutProfile and ADDON.SaveAppliedLayoutProfile(name) then
-        hideSaveLayoutError(popup)
-        popup:Hide()
         refreshLayoutRows()
         return true
     end
-    showSaveLayoutError(popup, "Layout-Name muss eindeutig sein")
-    if popup.editBox then
-        popup.editBox:SetFocus()
-        popup.editBox:HighlightText()
-    end
-    return false
+    return false, "Layout-Name muss eindeutig sein"
 end
 
 local function showSaveLayoutDialog()
-    StaticPopupDialogs["DUDES_FLEX_BINDINGS_SAVE_LAYOUT_SETTINGS"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_SAVE_LAYOUT_SETTINGS"] or {
+    DudesUtils.Dialog.Show({
+        title = "Layout speichern",
         text = "Layout-Name",
-        button1 = "Speichern",
-        button2 = "Abbrechen",
-        hasEditBox = 1,
+        acceptText = "Speichern",
+        cancelText = "Abbrechen",
+        hasEditBox = true,
         maxLetters = 64,
-        OnAccept = function(self)
-            saveLayoutFromDialog(self)
+        onAccept = function(name)
+            return saveLayoutFromDialog(name)
         end,
-        OnShow = function(self)
-            self.saveLayoutBaseHeight = self:GetHeight()
-            if self.editBox then
-                self.editBox:SetText("")
-                self.editBox:SetFocus()
-            end
-            hideSaveLayoutError(self)
-            local button = _G[self:GetName() .. "Button1"]
-            if button then
-                button:SetScript("OnClick", function()
-                    saveLayoutFromDialog(self)
-                end)
-            end
-        end,
-        OnHide = function(self)
-            hideSaveLayoutError(self)
-        end,
-        EditBoxOnEnterPressed = function(self)
-            saveLayoutFromDialog(self:GetParent())
-        end,
-        timeout = 0,
-        whileDead = 1,
-        hideOnEscape = 1,
-    }
-    raiseSettingsPopup(StaticPopup_Show("DUDES_FLEX_BINDINGS_SAVE_LAYOUT_SETTINGS"))
+    })
 end
 
 local function showLoadLayoutDialog(profileId, profileName)
@@ -747,51 +656,26 @@ local function showLoadLayoutDialog(profileId, profileName)
         return
     end
 
-    local loadLayoutText = "Layout '%s' laden?\n\nAktuelle Makros, Interface- und Bonusleisten-Belegungen des aktiven Specs werden ersetzt."
+    local loadLayoutText = "Aktuelle Makros, Interface- und Bonusleisten-Belegungen des aktiven Specs werden ersetzt."
     local showAccountWarning = ADDON.IsCharacterBindingSetEnabled and not ADDON.IsCharacterBindingSetEnabled()
     if showAccountWarning then
-        loadLayoutText = loadLayoutText .. "\n\n|cffff3333Warnung: Charakterspezifische Interface-Belegungen sind nicht aktiv. Dadurch werden auch die Interface-Belegungen für alle anderen Charaktere geändert.|r"
+        loadLayoutText = loadLayoutText .. "\n\n|cffff3333Warnung: Charakterspezifische Einstellungen sind nicht aktiv. Dadurch werden auch die gemeinsamen Interface-Belegungen für andere Charaktere geändert.|r"
     end
 
-    StaticPopupDialogs["DUDES_FLEX_BINDINGS_LOAD_LAYOUT_SETTINGS"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_LOAD_LAYOUT_SETTINGS"] or {
+    DudesUtils.Dialog.Show({
+        title = string.format("Layout '%s' laden?", tostring(profileName or "")),
         text = loadLayoutText,
-        button1 = "Laden",
-        button2 = "Abbrechen",
-        OnAccept = function(self)
-            local id = self.profileId
-            if id and ADDON.LoadLayoutProfile then
-                ADDON.LoadLayoutProfile(id)
+        width = 560,
+        acceptText = "Laden",
+        cancelText = "Abbrechen",
+        data = { profileId = profileId },
+        onAccept = function(_, data)
+            if data.profileId and ADDON.LoadLayoutProfile then
+                ADDON.LoadLayoutProfile(data.profileId)
                 refreshLayoutRows()
             end
-            self.profileId = nil
         end,
-        OnCancel = function(self)
-            self.profileId = nil
-        end,
-        OnShow = function(self)
-            local data = self.data or {}
-            self:SetWidth(560)
-            self:SetHeight((data.showAccountWarning and 190) or 150)
-            local text = _G[self:GetName() .. "Text"]
-            if text then
-                text:ClearAllPoints()
-                text:SetPoint("TOP", self, "TOP", 0, -20)
-                text:SetWidth(500)
-            end
-        end,
-        timeout = 0,
-        whileDead = 1,
-        hideOnEscape = 1,
-    }
-    StaticPopupDialogs["DUDES_FLEX_BINDINGS_LOAD_LAYOUT_SETTINGS"].text = loadLayoutText
-
-    local popup = StaticPopup_Show("DUDES_FLEX_BINDINGS_LOAD_LAYOUT_SETTINGS", profileName or "", nil, {
-        showAccountWarning = showAccountWarning,
     })
-    if popup then
-        popup.profileId = profileId
-        raiseSettingsPopup(popup)
-    end
 end
 
 local function showDeleteLayoutDialog(profileId, profileName)
@@ -799,31 +683,19 @@ local function showDeleteLayoutDialog(profileId, profileName)
         return
     end
 
-    StaticPopupDialogs["DUDES_FLEX_BINDINGS_DELETE_LAYOUT_SETTINGS"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_DELETE_LAYOUT_SETTINGS"] or {
-        text = "Layout '%s' löschen?\n\nDieses gespeicherte Layout wird dauerhaft entfernt.",
-        button1 = "Löschen",
-        button2 = "Abbrechen",
-        OnAccept = function(self)
-            local id = self.profileId
-            if id and ADDON.DeleteLayoutProfile then
-                ADDON.DeleteLayoutProfile(id)
+    DudesUtils.Dialog.Show({
+        title = string.format("Layout '%s' löschen?", tostring(profileName or "")),
+        text = "Dieses gespeicherte Layout wird dauerhaft entfernt.",
+        acceptText = "Löschen",
+        cancelText = "Abbrechen",
+        data = { profileId = profileId },
+        onAccept = function(_, data)
+            if data.profileId and ADDON.DeleteLayoutProfile then
+                ADDON.DeleteLayoutProfile(data.profileId)
                 refreshLayoutRows()
             end
-            self.profileId = nil
         end,
-        OnCancel = function(self)
-            self.profileId = nil
-        end,
-        timeout = 0,
-        whileDead = 1,
-        hideOnEscape = 1,
-    }
-
-    local popup = StaticPopup_Show("DUDES_FLEX_BINDINGS_DELETE_LAYOUT_SETTINGS", profileName or "")
-    if popup then
-        popup.profileId = profileId
-        raiseSettingsPopup(popup)
-    end
+    })
 end
 
 local function createDialogFrame(name, titleText, width, height)
@@ -1066,24 +938,12 @@ local function showExportLayoutDialog(profileId, profileName)
     selectExportText()
 end
 
-local function renameLayoutFromDialog(popup)
-    if not popup then
-        return false
-    end
-    local profileId = popup.profileId
-    local name = popup.editBox and popup.editBox:GetText() or ""
+local function renameLayoutFromDialog(profileId, name)
     if profileId and ADDON.RenameLayoutProfile and ADDON.RenameLayoutProfile(profileId, name) then
-        hideSaveLayoutError(popup)
-        popup:Hide()
         refreshLayoutRows()
         return true
     end
-    showSaveLayoutError(popup, "Layout-Name muss eindeutig sein")
-    if popup.editBox then
-        popup.editBox:SetFocus()
-        popup.editBox:HighlightText()
-    end
-    return false
+    return false, "Layout-Name muss eindeutig sein"
 end
 
 local function showRenameLayoutDialog(profileId, profileName)
@@ -1091,47 +951,19 @@ local function showRenameLayoutDialog(profileId, profileName)
         return
     end
 
-    StaticPopupDialogs["DUDES_FLEX_BINDINGS_RENAME_LAYOUT_SETTINGS"] = StaticPopupDialogs["DUDES_FLEX_BINDINGS_RENAME_LAYOUT_SETTINGS"] or {
+    DudesUtils.Dialog.Show({
+        title = "Layout umbenennen",
         text = "Neuer Layout-Name",
-        button1 = "Umbenennen",
-        button2 = "Abbrechen",
-        hasEditBox = 1,
+        acceptText = "Umbenennen",
+        cancelText = "Abbrechen",
+        hasEditBox = true,
         maxLetters = 64,
-        OnAccept = function(self)
-            renameLayoutFromDialog(self)
+        inputText = profileName or "",
+        data = { profileId = profileId },
+        onAccept = function(name, data)
+            return renameLayoutFromDialog(data.profileId, name)
         end,
-        OnShow = function(self)
-            self.saveLayoutBaseHeight = self:GetHeight()
-            hideSaveLayoutError(self)
-            local button = _G[self:GetName() .. "Button1"]
-            if button then
-                button:SetScript("OnClick", function()
-                    renameLayoutFromDialog(self)
-                end)
-            end
-        end,
-        OnHide = function(self)
-            self.profileId = nil
-            hideSaveLayoutError(self)
-        end,
-        EditBoxOnEnterPressed = function(self)
-            renameLayoutFromDialog(self:GetParent())
-        end,
-        timeout = 0,
-        whileDead = 1,
-        hideOnEscape = 1,
-    }
-
-    local popup = StaticPopup_Show("DUDES_FLEX_BINDINGS_RENAME_LAYOUT_SETTINGS")
-    if popup then
-        popup.profileId = profileId
-        if popup.editBox then
-            popup.editBox:SetText(profileName or "")
-            popup.editBox:SetFocus()
-            popup.editBox:HighlightText()
-        end
-        raiseSettingsPopup(popup)
-    end
+    })
 end
 
 local function createLayoutMenuButton(parent, index, text, onClick)
@@ -1229,23 +1061,23 @@ local function createOptionsPanel()
     optionsPanel.minimapCheckbox.text:SetPoint("LEFT", optionsPanel.minimapCheckbox, "RIGHT", 2, 1)
     optionsPanel.minimapCheckbox.text:SetText("Minimap Button anzeigen")
     optionsPanel.minimapCheckbox:SetScript("OnClick", function(self)
-        ADDON.GetSettings().showMinimapButton = self:GetChecked() and true or false
+        ADDON.SetSyncedSetting("showMinimapButton", self:GetChecked() and true or false)
         refreshMinimapButton()
     end)
 
-    optionsPanel.characterInterfaceBindingsCheckbox = createCheckbox(content, optionsPanel.minimapCheckbox, -4, "Charakterspezifische Interface Belegungen", function()
-        return ADDON.IsCharacterBindingSetEnabled and ADDON.IsCharacterBindingSetEnabled()
+    optionsPanel.characterSpecificSettingsCheckbox = createCheckbox(content, optionsPanel.minimapCheckbox, -4, "Charakterspezifische Einstellungen", function()
+        return ADDON.IsCharacterSpecificSettingsEnabled and ADDON.IsCharacterSpecificSettingsEnabled()
     end, function(value)
-        if value == false and ADDON.IsCharacterBindingSetEnabled and ADDON.IsCharacterBindingSetEnabled() then
+        if value == false and ADDON.IsCharacterSpecificSettingsEnabled and ADDON.IsCharacterSpecificSettingsEnabled() then
             showDisableCharacterBindingsDialog(function()
-                ADDON.SetCharacterBindingSetEnabled(false)
+                ADDON.SetCharacterSpecificSettingsEnabled(false)
                 ADDON.RefreshSettings()
             end, function()
                 ADDON.RefreshSettings()
             end)
             return false
         end
-        if ADDON.SetCharacterBindingSetEnabled and not ADDON.SetCharacterBindingSetEnabled(value) then
+        if ADDON.SetCharacterSpecificSettingsEnabled and not ADDON.SetCharacterSpecificSettingsEnabled(value) then
             return false
         end
     end, function()
@@ -1254,22 +1086,10 @@ local function createOptionsPanel()
         end
     end)
 
-    optionsPanel.characterBonusBarSettingsCheckbox = createCheckbox(content, optionsPanel.characterInterfaceBindingsCheckbox, -4, "Charakterspezifische Bonusleisten Einstellungen", function()
-        return ADDON.IsCharacterBonusBarSettingsEnabled and ADDON.IsCharacterBonusBarSettingsEnabled()
+    optionsPanel.triggerOnKeyDownCheckbox = createCheckbox(content, optionsPanel.characterSpecificSettingsCheckbox, -4, "Tasten beim Drücken auslösen", function()
+        return ADDON.GetSyncedSetting("triggerOnKeyDown")
     end, function(value)
-        if ADDON.SetCharacterBonusBarSettingsEnabled then
-            return ADDON.SetCharacterBonusBarSettingsEnabled(value)
-        end
-    end, function()
-        if ADDON.RefreshEditorBindings then
-            ADDON.RefreshEditorBindings()
-        end
-    end)
-
-    optionsPanel.triggerOnKeyDownCheckbox = createCheckbox(content, optionsPanel.characterBonusBarSettingsCheckbox, -4, "Tasten beim Drücken auslösen", function()
-        return ADDON.GetSettings().triggerOnKeyDown
-    end, function(value)
-        ADDON.GetSettings().triggerOnKeyDown = value
+        ADDON.SetSyncedSetting("triggerOnKeyDown", value)
         if ADDON.UpdateRuntimeButtonClickRegistration then
             return ADDON.UpdateRuntimeButtonClickRegistration()
         end
@@ -1442,7 +1262,8 @@ function ADDON.RefreshSettings()
     if not optionsPanel then
         return
     end
-    optionsPanel.minimapCheckbox:SetChecked(ADDON.GetSettings().showMinimapButton)
+    optionsPanel.minimapCheckbox:SetChecked(ADDON.GetSyncedSetting("showMinimapButton"))
+    refreshMinimapButton()
     refreshBonusBarSettingsControls()
     refreshLayoutRows()
 end
