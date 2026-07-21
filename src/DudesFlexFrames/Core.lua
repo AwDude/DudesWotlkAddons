@@ -12,7 +12,7 @@ local GROUP_LOOT_DEFAULT_SPACING = -15
 local GROUP_LOOT_FRAME_NAMES = {"GroupLootFrame1", "GroupLootFrame2", "GroupLootFrame3", "GroupLootFrame4"}
 local DEFAULT_SETTINGS = {
 	restoreOpenRolls = false,
-	autoConfirmBindOnPickup = false,
+	autoConfirmLootDialogs = false,
 	showOpenRollCount = false,
 	singleRollFrame = false,
 	rollFrameSpacing = 0
@@ -62,6 +62,9 @@ local scaleFrameNames = {
 }
 
 local function mergeDefaultSettings(settings)
+	if settings.autoConfirmLootDialogs == nil and settings.autoConfirmBindOnPickup ~= nil then
+		settings.autoConfirmLootDialogs = settings.autoConfirmBindOnPickup and true or false
+	end
 	for key, value in pairs(DEFAULT_SETTINGS) do
 		if settings[key] == nil then
 			settings[key] = value
@@ -443,13 +446,37 @@ local function onCancelLootRoll(_, rollId)
 end
 
 local function onConfirmLootRoll(_, rollId, rollType)
-	if getSettings().autoConfirmBindOnPickup and ConfirmLootRoll and rollId and rollType then
+	if getSettings().autoConfirmLootDialogs and ConfirmLootRoll and rollId and rollType then
 		if DudesLootTracker
 			and DudesLootTracker.OwnsLootRollConfirmation
 			and DudesLootTracker.OwnsLootRollConfirmation(rollId, rollType) then
 			return
 		end
 		ConfirmLootRoll(rollId, rollType)
+	end
+end
+
+local function onLootBindConfirm(_, lootSlot)
+	if getSettings().autoConfirmLootDialogs and ConfirmLootSlot and lootSlot then
+		ConfirmLootSlot(lootSlot)
+	end
+end
+
+local function onBindEnchant()
+	if getSettings().autoConfirmLootDialogs and BindEnchant then
+		BindEnchant()
+	end
+end
+
+local function onReplaceEnchant()
+	if getSettings().autoConfirmLootDialogs and ReplaceEnchant then
+		ReplaceEnchant()
+	end
+end
+
+local function onReplaceTradeEnchant()
+	if getSettings().autoConfirmLootDialogs and ReplaceTradeEnchant then
+		ReplaceTradeEnchant()
 	end
 end
 
@@ -513,6 +540,11 @@ DudesUtils.EventHandler.Add("PLAYER_REGEN_ENABLED", init)
 DudesUtils.EventHandler.Add("START_LOOT_ROLL", onStartLootRoll)
 DudesUtils.EventHandler.Add("CANCEL_LOOT_ROLL", onCancelLootRoll)
 DudesUtils.EventHandler.Add("CONFIRM_LOOT_ROLL", onConfirmLootRoll)
+DudesUtils.EventHandler.Add("CONFIRM_DISENCHANT_ROLL", onConfirmLootRoll)
+DudesUtils.EventHandler.Add("LOOT_BIND_CONFIRM", onLootBindConfirm)
+DudesUtils.EventHandler.Add("BIND_ENCHANT", onBindEnchant)
+DudesUtils.EventHandler.Add("REPLACE_ENCHANT", onReplaceEnchant)
+DudesUtils.EventHandler.Add("TRADE_REPLACE_ENCHANT", onReplaceTradeEnchant)
 DudesUtils.EventHandler.Add("PLAYER_ENTERING_WORLD", function()
 	if DudesUtils.OnNextUpdate then
 		DudesUtils.OnNextUpdate(restoreOpenRolls)

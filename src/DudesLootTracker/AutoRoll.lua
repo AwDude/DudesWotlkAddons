@@ -206,9 +206,11 @@ function ADDON.InitializeAutoRoll()
             handleStartLootRoll(rollId)
         end
     end)
-    DudesUtils.EventHandler.Add("CONFIRM_LOOT_ROLL", function(_, rollId, rollType)
+    local function confirmAutomatedRoll(_, rollId, rollType)
         handleConfirmLootRoll(rollId, rollType)
-    end)
+    end
+    DudesUtils.EventHandler.Add("CONFIRM_LOOT_ROLL", confirmAutomatedRoll)
+    DudesUtils.EventHandler.Add("CONFIRM_DISENCHANT_ROLL", confirmAutomatedRoll)
     DudesUtils.EventHandler.Add("CANCEL_LOOT_ROLL", function(_, rollId)
         if rollId then
             pendingAutoConfirmRolls[rollId] = nil

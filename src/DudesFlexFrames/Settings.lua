@@ -17,8 +17,8 @@ local function refreshControls()
 	if controls.restoreOpenRolls then
 		controls.restoreOpenRolls:SetChecked(settings.restoreOpenRolls and true or false)
 	end
-	if controls.autoConfirmBindOnPickup then
-		controls.autoConfirmBindOnPickup:SetChecked(settings.autoConfirmBindOnPickup and true or false)
+	if controls.autoConfirmLootDialogs then
+		controls.autoConfirmLootDialogs:SetChecked(settings.autoConfirmLootDialogs and true or false)
 	end
 	if controls.singleRollFrame then
 		controls.singleRollFrame:SetChecked(settings.singleRollFrame and true or false)
@@ -142,8 +142,8 @@ local function createOptionsPanel()
 	rollTitle:SetText("Würfel Fenster")
 
 	controls.restoreOpenRolls = createCheckbox(settingsPanel, rollTitle, -10, "Offene Würfe nach Ladebildschirm wieder einblenden", "restoreOpenRolls")
-	controls.autoConfirmBindOnPickup = createCheckbox(settingsPanel, controls.restoreOpenRolls, -4, "Loot-Bindung automatisch bestätigen", "autoConfirmBindOnPickup")
-	controls.singleRollFrame = createCheckbox(settingsPanel, controls.autoConfirmBindOnPickup, -4, "Einzelnes Würfelfenster", "singleRollFrame")
+	controls.autoConfirmLootDialogs = createCheckbox(settingsPanel, controls.restoreOpenRolls, -4, "Beute Dialoge automatisch bestätigen", "autoConfirmLootDialogs")
+	controls.singleRollFrame = createCheckbox(settingsPanel, controls.autoConfirmLootDialogs, -4, "Einzelnes Würfelfenster", "singleRollFrame")
 	controls.showOpenRollCount = createCheckbox(settingsPanel, controls.singleRollFrame, -4, "Anzahl offener Würfe anzeigen", "showOpenRollCount")
 	controls.rollFrameSpacing = createSpacingSlider(settingsPanel, controls.singleRollFrame)
 	refreshControls()

@@ -5,6 +5,7 @@ local currentLootSegment
 local lastNormalLootTime
 local pendingLootDecisions = {}
 local pendingRollSelections = {}
+local pendingRollItems = {}
 local lastDisenchantLoot
 local registeredLootChatFilter
 local knownBossGuids = {}
@@ -321,6 +322,16 @@ end
 local function addItemToSegment(segment, link, recipient, rollInfo, count)
     local itemId = ADDON.GetItemId(link)
     local recipientMethod = (rollInfo and rollInfo.method) or (segment and segment.lootMethod == "master" and "master") or "loot"
+    if rollInfo and rollInfo.itemDbId and recipient and recipient ~= "" then
+        local tracked = ADDON.FindItemById(rollInfo.itemDbId)
+        if tracked then
+            local method = resolveRecipientMethod(recipientMethod, rollInfo, tracked)
+            tracked.count = math.max(tonumber(tracked.count or 1) or 1, tonumber(count or 1) or 1)
+            tracked.recipients = tracked.recipients or {}
+            table.insert(tracked.recipients, { name = recipient, method = method, timestamp = ADDON.GetNow() })
+            return tracked
+        end
+    end
     for _, existing in ipairs(segment.items or {}) do
         if existing.itemId == itemId and ADDON.GetNow() - (existing.timestamp or 0) <= 3 then
             existing.count = math.max(tonumber(existing.count or 1) or 1, tonumber(count or 1) or 1)
@@ -414,6 +425,42 @@ local function consumePendingLootDecision(itemId)
     end
     pendingLootDecisions[itemId] = nil
     return decision
+end
+
+local function rememberPendingRollItem(item)
+    if not item or not item.itemId or not item.id then
+        return
+    end
+    local items = pendingRollItems[item.itemId] or {}
+    pendingRollItems[item.itemId] = items
+    for _, itemDbId in ipairs(items) do
+        if itemDbId == item.id then
+            return
+        end
+    end
+    table.insert(items, item.id)
+end
+
+local function consumePendingRollItem(itemId)
+    local items = itemId and pendingRollItems[itemId]
+    if not items then
+        return nil
+    end
+    while #items > 0 do
+        local itemDbId = table.remove(items, 1)
+        local item = ADDON.FindItemById(itemDbId)
+        if item
+            and item.blizzardRollStarted
+            and #(item.recipients or {}) == 0
+            and ADDON.GetNow() - (item.timestamp or 0) <= PENDING_DECISION_SECONDS then
+            if #items == 0 then
+                pendingRollItems[itemId] = nil
+            end
+            return { itemDbId = itemDbId }
+        end
+    end
+    pendingRollItems[itemId] = nil
+    return nil
 end
 
 local function parseLootRecipient(message)
@@ -643,8 +690,14 @@ local function handleLootMessage(message, recipientHint)
             segment = segment or createOrReuseSegment(classified, sourceName)
             local itemId = ADDON.GetItemId(link)
             local rollInfo
+            if rollWinner then
+                rollInfo = consumePendingRollItem(itemId)
+            end
             if isPlayerRecipient(recipient) then
-                rollInfo = consumePendingLootDecision(itemId)
+                local pendingDecision = consumePendingLootDecision(itemId)
+                if pendingDecision then
+                    rollInfo = pendingDecision
+                end
             end
             local selectedMethod = getRollSelection(itemId, recipient)
             if selectedMethod then
@@ -756,6 +809,7 @@ function ADDON.TrackRollLootItem(link)
     local item, segment = ADDON.FindRollCandidateByItemId(itemId)
     if item then
         item.blizzardRollStarted = true
+        rememberPendingRollItem(item)
         if segment then
             autoOpenSegment(segment)
         end
@@ -774,6 +828,7 @@ function ADDON.TrackRollLootItem(link)
     item = addItemToSegment(segment, link)
     if item then
         item.blizzardRollStarted = true
+        rememberPendingRollItem(item)
         autoOpenSegment(segment)
     end
     return item, segment

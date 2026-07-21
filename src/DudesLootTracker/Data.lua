@@ -13,6 +13,7 @@ local QUALITY_COLORS = {
 }
 
 local EMBLEM_ITEM_IDS = {
+    [43228] = true, -- Stone Keeper's Shard
     [40752] = true, -- Emblem of Heroism
     [40753] = true, -- Emblem of Valor
     [45624] = true, -- Emblem of Conquest

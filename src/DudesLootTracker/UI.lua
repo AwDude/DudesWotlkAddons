@@ -410,6 +410,7 @@ local function acquireLootRow(index)
     row.text = createText(row, 10)
     row.subtext = createText(row, 8)
     row.detail = createText(row, 9, "RIGHT")
+    row.method = createText(row, 8, "RIGHT")
     row.enemyHitbox = CreateFrame("Frame", nil, row)
     row.enemyHitbox:EnableMouse(true)
     row.itemHitbox = CreateFrame("Frame", nil, row)
@@ -438,6 +439,10 @@ local function resetLootRow(row)
     if row.detail then
         row.detail:SetText("")
         row.detail:SetJustifyH("RIGHT")
+    end
+    if row.method then
+        row.method:SetText("")
+        row.method:SetJustifyH("RIGHT")
     end
     if row.enemyHitbox then
         row.enemyHitbox:Hide()
@@ -782,15 +787,6 @@ local function formatItemInfo(item)
         table.insert(parts, "<" .. tostring(item.itemLevel) .. ">")
     end
     return table.concat(parts, " ")
-end
-
-local function formatItemDetail(item)
-    local owner = formatOwnership(item)
-    local method = formatLootMethodDetail(item)
-    if method ~= "" then
-        return owner .. "\n" .. method
-    end
-    return owner
 end
 
 local function measureMultilineTextWidth(fontString, text)
@@ -1146,21 +1142,34 @@ local function addItemRow(index, item, y)
     row:SetBackdropBorderColor(0.18, 0.21, 0.28, 0)
     row.detail:ClearAllPoints()
     row.detail:SetPoint("TOPRIGHT", row, "TOPRIGHT", -LOOT_AREA_RIGHT_INSET, -2)
-    row.detail:SetHeight(30)
-    row.detail:SetFont(STANDARD_TEXT_FONT, 8, "")
+    row.detail:SetHeight(14)
+    row.detail:SetFont(STANDARD_TEXT_FONT, 9, "")
     row.detail:SetJustifyH("RIGHT")
-    row.detail:SetTextColor(0.78, 0.82, 0.88)
+    row.detail:SetTextColor(0.88, 0.91, 0.96)
     if row.detail.SetWordWrap then
         row.detail:SetWordWrap(false)
     end
     if row.detail.SetNonSpaceWrap then
         row.detail:SetNonSpaceWrap(false)
     end
-    local detailText = formatItemDetail(item)
-    row.detail:SetText(detailText)
-    local measuredDetailWidth = measureMultilineTextWidth(row.detail, detailText)
+    local ownerText = formatOwnership(item)
+    local methodText = formatLootMethodDetail(item)
+    row.detail:SetText(ownerText)
+    row.method:ClearAllPoints()
+    row.method:SetPoint("TOPRIGHT", row.detail, "BOTTOMRIGHT", 0, -1)
+    row.method:SetHeight(13)
+    row.method:SetFont(STANDARD_TEXT_FONT, 8, "")
+    row.method:SetJustifyH("RIGHT")
+    row.method:SetTextColor(0.65, 0.71, 0.80)
+    row.method:SetText(methodText)
+    local measuredDetailWidth = math.max(
+        measureMultilineTextWidth(row.detail, ownerText),
+        measureMultilineTextWidth(row.method, methodText)
+    )
     local maxDetailWidth = math.max(90, math.min(180, math.floor((row:GetWidth() or 520) * 0.42)))
-    row.detail:SetWidth(math.min(maxDetailWidth, math.max(70, measuredDetailWidth + 12)))
+    local detailWidth = math.min(maxDetailWidth, math.max(70, measuredDetailWidth + 12))
+    row.detail:SetWidth(detailWidth)
+    row.method:SetWidth(detailWidth)
     row.text:ClearAllPoints()
     row.text:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 6, -1)
     row.text:SetPoint("RIGHT", row.detail, "LEFT", -12, 0)
@@ -1189,7 +1198,7 @@ local function addItemRow(index, item, y)
         row.detailHitbox:SetFrameLevel(row:GetFrameLevel() + 2)
         row.detailHitbox:ClearAllPoints()
         row.detailHitbox:SetPoint("TOPLEFT", row.detail, "TOPLEFT", 0, 0)
-        row.detailHitbox:SetPoint("BOTTOMRIGHT", row.detail, "BOTTOMRIGHT", 0, 0)
+        row.detailHitbox:SetPoint("BOTTOMRIGHT", row.method, "BOTTOMRIGHT", 0, 0)
         setupLootTimestampTooltip(row.detailHitbox, item)
     end
     rememberLootRow(row, y, ITEM_ROW_HEIGHT)
