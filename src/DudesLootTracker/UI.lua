@@ -979,7 +979,16 @@ getInstanceGroupKey = function(segment)
     if not segment or not segment.raid or segment.raid == "" or segment.raid == "World" then
         return "outside"
     end
-    return segment.raidKey or (tostring(segment.raid) .. ":" .. tostring(segment.raidSize or ""))
+    local raidId = segment.raidId
+    if not raidId and segment.raidKey then
+        raidId = string.match(segment.raidKey, ":([^:]+)$")
+    end
+    return table.concat({
+        tostring(segment.raid),
+        tostring(segment.raidSize or ""),
+        tostring(segment.difficultyIndex or segment.difficultyName or (segment.heroic and "heroic" or "normal")),
+        tostring(raidId or "unsaved"),
+    }, ":")
 end
 
 local function addAreaHeader(index, area, y)

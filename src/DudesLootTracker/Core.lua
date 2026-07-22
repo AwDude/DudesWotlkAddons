@@ -199,15 +199,24 @@ function ADDON.GetCurrentRaidKey()
     end
 
     local raidId = nil
+    local bestSavedMatch = -1
     if GetNumSavedInstances and GetSavedInstanceInfo then
         for i = 1, GetNumSavedInstances() do
             local savedName, id, reset, savedDifficulty, locked, extended, instanceIDMostSig, isRaid, savedMaxPlayers, savedDifficultyName = GetSavedInstanceInfo(i)
             if savedName == name and locked then
-                raidId = id or instanceIDMostSig
-                difficultyIndex = savedDifficulty or difficultyIndex
-                difficultyName = savedDifficultyName or difficultyName
-                maxPlayers = savedMaxPlayers or maxPlayers
-                break
+                local matchScore = 0
+                if difficultyIndex and savedDifficulty == difficultyIndex then
+                    matchScore = matchScore + 2
+                end
+                if maxPlayers and savedMaxPlayers == maxPlayers then
+                    matchScore = matchScore + 1
+                end
+                if (not difficultyIndex and not maxPlayers) or matchScore > 0 then
+                    if matchScore > bestSavedMatch then
+                        bestSavedMatch = matchScore
+                        raidId = id or instanceIDMostSig
+                    end
+                end
             end
         end
     end
@@ -340,6 +349,9 @@ function ADDON.Initialize()
     end
     if ADDON.InitializeTracker then
         ADDON.InitializeTracker()
+    end
+    if ADDON.ReconcileTrackedLoot then
+        ADDON.ReconcileTrackedLoot()
     end
     if ADDON.InitializeAutoRoll then
         ADDON.InitializeAutoRoll()

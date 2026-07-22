@@ -6,7 +6,7 @@ local lastNormalLootTime
 local pendingLootDecisions = {}
 local pendingRollSelections = {}
 local pendingRollItems = {}
-local lastDisenchantLoot
+local pendingDisenchantLoots = {}
 local registeredLootChatFilter
 local knownBossGuids = {}
 local autoOpenedSegments = {}
@@ -15,6 +15,7 @@ local formatPatternCache = {}
 local LOOT_GROUP_SECONDS = 8
 local PENDING_DECISION_SECONDS = 120
 local BOSS_LOOT_SECONDS = 300
+local DISENCHANT_REWARD_SECONDS = 60
 local DISENCHANT_MATERIAL_IDS = {
     [10938] = true, [10939] = true, [10940] = true, [10978] = true,
     [10998] = true, [11082] = true, [11083] = true, [11084] = true,
@@ -328,34 +329,57 @@ local function addItemToSegment(segment, link, recipient, rollInfo, count)
             local method = resolveRecipientMethod(recipientMethod, rollInfo, tracked)
             tracked.count = math.max(tonumber(tracked.count or 1) or 1, tonumber(count or 1) or 1)
             tracked.recipients = tracked.recipients or {}
-            table.insert(tracked.recipients, { name = recipient, method = method, timestamp = ADDON.GetNow() })
+            local existingRecipient
+            for _, trackedRecipient in ipairs(tracked.recipients) do
+                if getRecipientKey(trackedRecipient.name) == getRecipientKey(recipient) then
+                    existingRecipient = trackedRecipient
+                    break
+                end
+            end
+            if existingRecipient then
+                if not existingRecipient.method or existingRecipient.method == "loot" or method ~= "loot" then
+                    existingRecipient.method = method
+                end
+            else
+                table.insert(tracked.recipients, { name = recipient, method = method, timestamp = ADDON.GetNow() })
+            end
             return tracked
         end
     end
     for _, existing in ipairs(segment.items or {}) do
-        if existing.itemId == itemId and ADDON.GetNow() - (existing.timestamp or 0) <= 3 then
-            existing.count = math.max(tonumber(existing.count or 1) or 1, tonumber(count or 1) or 1)
+        if existing.itemId == itemId then
+            local age = ADDON.GetNow() - (existing.timestamp or 0)
             local hasRecipient = #(existing.recipients or {}) > 0
             local sameRecipient
             local sameRecipientEntry
             for _, existingRecipient in ipairs(existing.recipients or {}) do
-                if recipient and existingRecipient.name == recipient then
+                if recipient and getRecipientKey(existingRecipient.name) == getRecipientKey(recipient) then
                     sameRecipient = true
                     sameRecipientEntry = existingRecipient
                     break
                 end
             end
-            if recipient and recipient ~= "" and (not hasRecipient or sameRecipient) then
-                local method = resolveRecipientMethod(recipientMethod, rollInfo, existing)
-                existing.recipients = existing.recipients or {}
-                if not sameRecipient then
-                    table.insert(existing.recipients, { name = recipient, method = method, timestamp = ADDON.GetNow() })
-                elseif sameRecipientEntry and method then
-                    sameRecipientEntry.method = method
+            if age <= PENDING_DECISION_SECONDS and (not recipient or sameRecipient) then
+                existing.count = math.max(tonumber(existing.count or 1) or 1, tonumber(count or 1) or 1)
+                if sameRecipientEntry then
+                    local method = resolveRecipientMethod(recipientMethod, rollInfo, existing)
+                    if not sameRecipientEntry.method or sameRecipientEntry.method == "loot" or method ~= "loot" then
+                        sameRecipientEntry.method = method
+                    end
                 end
                 return existing
-            elseif not recipient and hasRecipient then
-                return existing
+            end
+            if age <= 3 then
+                existing.count = math.max(tonumber(existing.count or 1) or 1, tonumber(count or 1) or 1)
+                if recipient and recipient ~= "" and not hasRecipient then
+                    existing.recipients = existing.recipients or {}
+                    table.insert(existing.recipients, {
+                        name = recipient,
+                        method = resolveRecipientMethod(recipientMethod, rollInfo, existing),
+                        timestamp = ADDON.GetNow(),
+                    })
+                    return existing
+                end
             end
         end
     end
@@ -584,19 +608,63 @@ local function addDisenchantReward(source, link, count)
     })
 end
 
+local function rememberPendingDisenchantLoot(item, recipient)
+    local recipientKey = getRecipientKey(recipient)
+    if not item or not item.id or not recipientKey then
+        return
+    end
+    for _, pending in ipairs(pendingDisenchantLoots) do
+        if pending.itemId == item.id then
+            return
+        end
+    end
+    table.insert(pendingDisenchantLoots, {
+        itemId = item.id,
+        recipientKey = recipientKey,
+        timestamp = ADDON.GetNow(),
+    })
+end
+
 local function captureDisenchantRewards(message, links)
-    if not lastDisenchantLoot or ADDON.GetNow() - (lastDisenchantLoot.timestamp or 0) > 10 then
+    local hasMaterial
+    for _, link in ipairs(links or {}) do
+        if isDisenchantMaterial(link) then
+            hasMaterial = true
+            break
+        end
+    end
+    if not hasMaterial then
         return false
     end
     local rewardRecipient = parseLootRecipient(message)
     if not rewardRecipient and (isSelfLootMessage(message) or isSelfItemReceiveMessage(message)) then
         rewardRecipient = UnitName and UnitName("player")
     end
-    if not rewardRecipient
-        or (lastDisenchantLoot.recipient and getRecipientKey(rewardRecipient) ~= getRecipientKey(lastDisenchantLoot.recipient)) then
+    local recipientKey = getRecipientKey(rewardRecipient)
+    if not recipientKey then
         return false
     end
-    local source = ADDON.FindItemById(lastDisenchantLoot.itemId)
+    local source
+    local pendingIndex
+    local now = ADDON.GetNow()
+    for i = #pendingDisenchantLoots, 1, -1 do
+        local pending = pendingDisenchantLoots[i]
+        if now - (pending.timestamp or 0) > DISENCHANT_REWARD_SECONDS
+            or not ADDON.FindItemById(pending.itemId) then
+            table.remove(pendingDisenchantLoots, i)
+        end
+    end
+    for i, pending in ipairs(pendingDisenchantLoots) do
+        if pending.recipientKey == recipientKey then
+            source = ADDON.FindItemById(pending.itemId)
+            pendingIndex = i
+            break
+        end
+    end
+    if not source and pendingDisenchantLoots[1] then
+        source = ADDON.FindItemById(pendingDisenchantLoots[1].itemId)
+        pendingIndex = source and 1 or nil
+    end
     if not source then
         return false
     end
@@ -607,10 +675,150 @@ local function captureDisenchantRewards(message, links)
             added = true
         end
     end
+    if added and pendingIndex then
+        table.remove(pendingDisenchantLoots, pendingIndex)
+    end
     if added and ADDON.RequestRefreshMainWindow then
         ADDON.RequestRefreshMainWindow()
     end
     return added and true or false
+end
+
+local function getDisenchantRecipientKey(item)
+    for _, recipient in ipairs(item and item.recipients or {}) do
+        if recipient.method == "disenchant" then
+            return getRecipientKey(recipient.name)
+        end
+    end
+    if item and item.rollMethod == "disenchant" and item.recipients and item.recipients[1] then
+        return getRecipientKey(item.recipients[1].name)
+    end
+    return nil
+end
+
+function ADDON.ReconcileTrackedLoot()
+    local segments = ADDON.GetCharacterDB().segments or {}
+    local changed
+
+    local function mergeDuplicateItem(target, duplicate)
+        target.blizzardRollStarted = target.blizzardRollStarted or duplicate.blizzardRollStarted
+        target.rollMethod = target.rollMethod or duplicate.rollMethod
+        target.count = math.max(tonumber(target.count or 1) or 1, tonumber(duplicate.count or 1) or 1)
+        local targetRecipient = target.recipients and target.recipients[1]
+        local duplicateRecipient = duplicate.recipients and duplicate.recipients[1]
+        if targetRecipient and duplicateRecipient
+            and (not targetRecipient.method or targetRecipient.method == "loot")
+            and duplicateRecipient.method then
+            targetRecipient.method = duplicateRecipient.method
+        end
+        for _, reward in ipairs(duplicate.disenchantRewards or {}) do
+            if type(reward) == "table" and reward.link then
+                addDisenchantReward(target, reward.link, reward.count)
+            end
+        end
+    end
+
+    -- Older event sequences could save both the rolled item and a later
+    -- LOOT_OPENED placeholder. Keep the awarded record and discard only the
+    -- matching, recipient-less roll copy from the same segment.
+    for _, segment in ipairs(segments) do
+        local items = segment.items or {}
+        for i = #items, 1, -1 do
+            local unassigned = items[i]
+            if #(unassigned.recipients or {}) == 0 then
+                for j, assigned in ipairs(items) do
+                    local unassignedTime = tonumber(unassigned.timestamp)
+                    local assignedTime = tonumber(assigned.timestamp)
+                    if j ~= i
+                        and assigned.itemId == unassigned.itemId
+                        and #(assigned.recipients or {}) > 0
+                        and unassignedTime
+                        and assignedTime
+                        and math.abs(unassignedTime - assignedTime) <= PENDING_DECISION_SECONDS then
+                        mergeDuplicateItem(assigned, unassigned)
+                        table.remove(items, i)
+                        changed = true
+                        break
+                    end
+                end
+            end
+        end
+
+        for i = #items, 2, -1 do
+            local duplicate = items[i]
+            local duplicateRecipient = duplicate.recipients and duplicate.recipients[1]
+            local duplicateRecipientKey = duplicateRecipient and getRecipientKey(duplicateRecipient.name)
+            if duplicateRecipientKey then
+                for j = 1, i - 1 do
+                    local original = items[j]
+                    local originalRecipient = original.recipients and original.recipients[1]
+                    local originalTime = tonumber(original.timestamp)
+                    local duplicateTime = tonumber(duplicate.timestamp)
+                    if original.itemId == duplicate.itemId
+                        and originalRecipient
+                        and getRecipientKey(originalRecipient.name) == duplicateRecipientKey
+                        and originalTime
+                        and duplicateTime
+                        and math.abs(originalTime - duplicateTime) <= PENDING_DECISION_SECONDS then
+                        mergeDuplicateItem(original, duplicate)
+                        table.remove(items, i)
+                        changed = true
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    -- Convert already stored disenchant-material rows into tooltip rewards.
+    local pending = {}
+    for _, segment in ipairs(segments) do
+        local items = segment.items or {}
+        local i = 1
+        while i <= #items do
+            local item = items[i]
+            local disenchantRecipientKey = getDisenchantRecipientKey(item)
+            if disenchantRecipientKey then
+                table.insert(pending, {
+                    item = item,
+                    recipientKey = disenchantRecipientKey,
+                    timestamp = tonumber(item.timestamp) or 0,
+                })
+                i = i + 1
+            elseif item.link and isDisenchantMaterial(item.link) and item.recipients and item.recipients[1] then
+                local materialTime = tonumber(item.timestamp) or 0
+                local materialRecipientKey = getRecipientKey(item.recipients[1].name)
+                local pendingIndex
+                for pendingPosition, source in ipairs(pending) do
+                    local age = materialTime - source.timestamp
+                    if source.recipientKey == materialRecipientKey and age >= 0 and age <= DISENCHANT_REWARD_SECONDS then
+                        pendingIndex = pendingPosition
+                        break
+                    end
+                end
+                if not pendingIndex then
+                    for pendingPosition, source in ipairs(pending) do
+                        local age = materialTime - source.timestamp
+                        if age >= 0 and age <= DISENCHANT_REWARD_SECONDS then
+                            pendingIndex = pendingPosition
+                            break
+                        end
+                    end
+                end
+                if pendingIndex then
+                    addDisenchantReward(pending[pendingIndex].item, item.link, item.count)
+                    table.remove(pending, pendingIndex)
+                    table.remove(items, i)
+                    changed = true
+                else
+                    i = i + 1
+                end
+            else
+                i = i + 1
+            end
+        end
+    end
+    return changed and true or false
 end
 
 local function updateExistingLootRecipientFromTrade(message, links)
@@ -706,11 +914,7 @@ local function handleLootMessage(message, recipientHint)
             end
             local item = addItemToSegment(segment, link, recipient, rollInfo, getLootCount(message, link))
             if item and rollInfo and rollInfo.method == "disenchant" then
-                lastDisenchantLoot = {
-                    itemId = item.id,
-                    recipient = recipient,
-                    timestamp = ADDON.GetNow(),
-                }
+                rememberPendingDisenchantLoot(item, recipient)
             end
         end
     end

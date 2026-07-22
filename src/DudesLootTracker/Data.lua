@@ -250,6 +250,7 @@ function ADDON.CreateSegment(segmentType, sourceName)
         raid = context.raid,
         instanceType = context.instanceType,
         raidSize = context.size or raidInfo.size,
+        difficultyIndex = context.difficultyIndex or raidInfo.difficultyIndex,
         heroic = context.heroic,
         difficultyName = context.difficultyName,
         lootMethod = lootMethod.method,
