@@ -1,7 +1,6 @@
 local ADDON = DudesLootTracker
 
 local window
-local automationDialog
 local lootRows = {}
 local lootLayoutEntries = {}
 local collapsedLootAreas = {}
@@ -12,14 +11,12 @@ local pendingShowWindow
 local pendingRefreshMainWindow
 local pendingResizeLayout
 local pendingLootViewportRefresh
-local isInstanceContext
 local requestLootViewportRefresh
 local renderLootLayoutEntry
 local getInstanceGroupKey
 local getAreaType
 local BORDER_R, BORDER_G, BORDER_B = 0.32, 0.38, 0.46
 local HOVER_R, HOVER_G, HOVER_B = 0.72, 0.86, 1
-local BOSS_TEXT_COLOR = "b82020"
 local MIN_WIDTH, MIN_HEIGHT = 620, 340
 local TOP_TITLE_Y = -18
 local TITLE_CONTENT_GAP = 30
@@ -51,15 +48,9 @@ local LOOT_AREA_CONTENT_X = 24
 local LOOT_AREA_RIGHT_INSET = 12
 local LOOT_AREA_META_RIGHT_INSET = 24
 local LOOT_SEPARATOR_RIGHT_INSET = 16
-local PRIMORDIAL_SARONITE_LINK = "|cffa335ee|Hitem:49908:0:0:0:0:0:0:0:80|h[Urtümliches Saronit]|h|r"
-local AUTOMATION_ACTION_LABELS = {
-    manual = "Manuell",
-    pass = "Passen",
-    disenchant = "Entzaubern",
-    greed = "Gier",
-    need = "Bedarf",
-}
-
+local AUTO_GREED_LABEL_PREFIX = "|cff1eff00Ungewöhnlich|r"
+local AUTO_GREED_LABEL_SUFFIX = " automatisch Gier/Entzaubern"
+local AUTO_GREED_LABEL_FULL = AUTO_GREED_LABEL_PREFIX .. AUTO_GREED_LABEL_SUFFIX
 local function setBackdrop(frame, r, g, b, a)
     frame:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -502,7 +493,6 @@ end
 local function rowPassesFilters(item, segment)
     local filters = ADDON.GetFilters()
     filters.qualities = filters.qualities or {}
-    filters.enemies = filters.enemies or {}
     filters.areas = filters.areas or { raid = true, instance = true, world = true }
 
     local isEmblem = ADDON.IsEmblem and ADDON.IsEmblem(item)
@@ -541,10 +531,6 @@ local function rowPassesFilters(item, segment)
     end
 
     if not filters.qualities[getQualityKey(item.quality)] then
-        return false
-    end
-    local enemyType = (segment.type == "boss" or segment.type == "miniBoss") and "boss" or "normal"
-    if not filters.enemies[enemyType] then
         return false
     end
     if not filters.areas[getAreaType(segment)] then
@@ -804,13 +790,6 @@ local function measureMultilineTextWidth(fontString, text)
     end
     fontString:SetText(text)
     return maxWidth
-end
-
-local function getSegmentEnemyType(segment)
-    if segment and (segment.type == "boss" or segment.type == "miniBoss") then
-        return "boss"
-    end
-    return "normal"
 end
 
 getAreaType = function(segment)
@@ -1305,7 +1284,7 @@ local function buildLootAreas(segments, maxVisibleItems)
 
             local title = tostring(segment.sourceName or "")
             if title == "" then
-                title = getSegmentEnemyType(segment) == "boss" and "Boss" or "Normal"
+                title = "Unbekannt"
             end
             local enemy = {
                 key = getEnemyStableKey(segment),
@@ -1377,7 +1356,6 @@ local function resetFilters()
     filters.minRequiredLevel = nil
     filters.maxRequiredLevel = nil
     filters.qualities = { legendary = true, epic = true, rare = true, uncommon = true, common = true, poor = true }
-    filters.enemies = { boss = true, normal = true }
     filters.areas = { raid = true, instance = true, world = true }
 end
 
@@ -1389,12 +1367,6 @@ local function setAllQuality(value)
     qualities.uncommon = value
     qualities.common = value
     qualities.poor = value
-end
-
-local function setAllEnemies(value)
-    local enemies = ADDON.GetFilters().enemies
-    enemies.boss = value
-    enemies.normal = value
 end
 
 local function setAllAreas(value)
@@ -1412,10 +1384,6 @@ local function refreshControls()
     end
     local filters = ADDON.GetFilters()
     local contentWidth = window.controlContent:GetWidth() or (LEFT_WIDTH - 2)
-    if window.automationFrame then
-        window.automationFrame:SetWidth(contentWidth)
-        window.automationFrame:Hide()
-    end
     if window.filterFrame then
         window.filterFrame:SetWidth(contentWidth)
         window.filterFrame:ClearAllPoints()
@@ -1437,12 +1405,37 @@ local function refreshControls()
     window.controls.uncommon:SetChecked(filters.qualities.uncommon)
     window.controls.common:SetChecked(filters.qualities.common)
     window.controls.poor:SetChecked(filters.qualities.poor)
-    window.controls.boss:SetChecked(filters.enemies.boss)
-    window.controls.normal:SetChecked(filters.enemies.normal)
+    window.autoGreedDisenchant:SetChecked(ADDON.GetSettings().autoGreedDisenchantUncommon and true or false)
     filters.areas = filters.areas or { raid = true, instance = true, world = true }
     window.controls.raid:SetChecked(filters.areas.raid)
     window.controls.instance:SetChecked(filters.areas.instance)
     window.controls.world:SetChecked(filters.areas.world)
+end
+
+local function updateAutoGreedLabel()
+    if not window or not window.autoGreedDisenchant or not window.autoGreedDisenchant.text then
+        return
+    end
+    local label = window.autoGreedDisenchant.text
+    local availableWidth = label:GetWidth() or 0
+    if availableWidth <= 0 then
+        return
+    end
+
+    label:SetText(AUTO_GREED_LABEL_FULL)
+    if (label:GetStringWidth() or 0) <= availableWidth then
+        return
+    end
+
+    for length = #AUTO_GREED_LABEL_SUFFIX, 0, -1 do
+        local suffix = string.sub(AUTO_GREED_LABEL_SUFFIX, 1, length)
+        suffix = string.gsub(suffix, "%s+$", "")
+        label:SetText(AUTO_GREED_LABEL_PREFIX .. suffix .. "...")
+        if (label:GetStringWidth() or 0) <= availableWidth then
+            return
+        end
+    end
+    label:SetText(AUTO_GREED_LABEL_PREFIX .. "...")
 end
 
 local function addControl(parent, control, y, height, titleStyle)
@@ -1604,6 +1597,16 @@ local function createControls()
     window.lootTitleButton = CreateFrame("Button", nil, window)
     window.lootTitleButton:SetScript("OnClick", toggleAllLootExpanded)
     window.lootTitleButton:HookScript("OnMouseDown", clearFocusedNumberBox)
+    window.autoGreedDisenchant = createCheckbox(window, AUTO_GREED_LABEL_FULL)
+    window.autoGreedDisenchant.text:SetFont(STANDARD_TEXT_FONT, 10, "")
+    window.autoGreedDisenchant.text:SetPoint("LEFT", window.autoGreedDisenchant, "RIGHT", 2, 0)
+    window.autoGreedDisenchant.text:SetHeight(22)
+    if window.autoGreedDisenchant.text.SetWordWrap then
+        window.autoGreedDisenchant.text:SetWordWrap(false)
+    end
+    window.autoGreedDisenchant:SetScript("OnClick", function(self)
+        ADDON.GetSettings().autoGreedDisenchantUncommon = self:GetChecked() and true or false
+    end)
     local reset = createSmallButton(filterFrame, "Zurücksetzen", 88)
     window.resetFiltersButton = reset
     reset:GetFontString():SetFont(STANDARD_TEXT_FONT, 10, "")
@@ -1675,28 +1678,6 @@ local function createControls()
         setAllQuality(not allChecked)
         ADDON.RefreshMainWindow()
     end, qualityEntries)
-
-    local enemyMap = {
-        { key = "boss", label = "Boss", color = BOSS_TEXT_COLOR },
-        { key = "normal", label = "Normal", color = "ffffff" },
-    }
-    local enemyEntries = {}
-    for _, entry in ipairs(enemyMap) do
-        local cb = createCheckbox(filterFrame, entry.label)
-        setTextColorHex(cb.text, entry.color)
-        window.controls[entry.key] = cb
-        cb:SetScript("OnClick", function(self)
-            ADDON.GetFilters().enemies[entry.key] = self:GetChecked() and true or false
-            ADDON.RefreshMainWindow()
-        end)
-        table.insert(enemyEntries, { checkbox = cb })
-    end
-    y = createGroupCard(filterFrame, y, "Gegner", function()
-        local enemies = ADDON.GetFilters().enemies
-        local allChecked = enemies.boss and enemies.normal
-        setAllEnemies(not allChecked)
-        ADDON.RefreshMainWindow()
-    end, enemyEntries)
 
     local areaMap = {
         { key = "raid", label = "Raid", color = "b88cff" },
@@ -1792,8 +1773,18 @@ local function layoutWindow(refreshContent)
         if window.lootTitleButton then
             window.lootTitleButton:ClearAllPoints()
             window.lootTitleButton:SetPoint("TOPLEFT", window.lootTitle, "TOPLEFT", -4, 2)
-            window.lootTitleButton:SetWidth(72)
+            window.lootTitleButton:SetWidth(54)
             window.lootTitleButton:SetHeight(22)
+        end
+        if window.autoGreedDisenchant then
+            window.autoGreedDisenchant:ClearAllPoints()
+            window.autoGreedDisenchant:SetPoint("LEFT", window.lootTitle, "RIGHT", 6, 0)
+            window.autoGreedDisenchant.text:ClearAllPoints()
+            window.autoGreedDisenchant.text:SetPoint("LEFT", window.autoGreedDisenchant, "RIGHT", 2, 0)
+            window.autoGreedDisenchant.text:SetPoint("RIGHT", window.settings, "LEFT", -8, 0)
+            window.autoGreedDisenchant:Show()
+            window.autoGreedDisenchant.text:Show()
+            updateAutoGreedLabel()
         end
 
     end
@@ -1802,13 +1793,6 @@ local function layoutWindow(refreshContent)
     window.close:SetPoint("TOPRIGHT", window, "TOPRIGHT", -12, -10)
     window.settings:ClearAllPoints()
     window.settings:SetPoint("RIGHT", window.close, "LEFT", -6, 0)
-    window.automationButton:ClearAllPoints()
-    window.automationButton:SetPoint("RIGHT", window.settings, "LEFT", -6, 0)
-    if isInstanceContext() then
-        window.automationButton:Show()
-    else
-        window.automationButton:Hide()
-    end
 
     anchorMainAreas(SCROLLBAR_RESERVE, true)
 
@@ -1890,251 +1874,6 @@ local function createScrollFrame(name, parent)
     return scroll, content
 end
 
-local function isIcecrownCitadel()
-    if not GetInstanceInfo then
-        return false
-    end
-    local name, instanceType, difficultyIndex, difficultyName, maxPlayers, playerDifficulty, isDynamic, mapID = GetInstanceInfo()
-    return mapID == 631 or name == "Eiskronenzitadelle" or name == "Icecrown Citadel"
-end
-
-function isInstanceContext()
-    if not GetInstanceInfo then
-        return false
-    end
-    local name, instanceType = GetInstanceInfo()
-    return instanceType == "party" or instanceType == "raid"
-end
-
-local function setSelectorValue(selector, value)
-    selector.dltValue = value or "manual"
-    selector:SetText(AUTOMATION_ACTION_LABELS[selector.dltValue] or AUTOMATION_ACTION_LABELS.manual)
-end
-
-local function hideActionSelectorMenus(exceptSelector)
-    if not automationDialog or not automationDialog.controls then
-        return
-    end
-    for _, row in pairs(automationDialog.controls) do
-        local selector = row and row.selector
-        if selector and selector ~= exceptSelector and selector.dltMenu then
-            selector.dltMenu:Hide()
-        end
-    end
-end
-
-local function createActionSelectorMenu(selector)
-    local actions = selector.dltActions or {}
-    local width = selector:GetWidth()
-    if not width or width < 1 then
-        width = 82
-    end
-    local menu = CreateFrame("Frame", nil, selector)
-    selector.dltMenu = menu
-    menu:SetFrameLevel(selector:GetFrameLevel() + 10)
-    menu:SetWidth(width)
-    menu:SetHeight((#actions * 22) + 6)
-    menu:EnableMouse(true)
-    menu:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        tile = false,
-    })
-    menu:SetBackdropColor(0.02, 0.025, 0.035, 1)
-    menu:SetPoint("TOPLEFT", selector, "BOTTOMLEFT", 0, -2)
-    menu:Hide()
-
-    for index, action in ipairs(actions) do
-        local option = createSmallButton(menu, AUTOMATION_ACTION_LABELS[action] or action, width - 6)
-        option:SetFrameLevel(menu:GetFrameLevel() + 1)
-        option:SetPoint("TOPLEFT", menu, "TOPLEFT", 3, -3 - ((index - 1) * 22))
-        option:SetScript("OnClick", function()
-            setSelectorValue(selector, action)
-            menu:Hide()
-        end)
-    end
-
-    return menu
-end
-
-local function createActionSelector(parent, actions)
-    local selector = createSmallButton(parent, "Manuell", 82)
-    selector.dltActions = actions
-    selector:Enable()
-    selector:EnableMouse(true)
-    if selector.RegisterForClicks then
-        selector:RegisterForClicks("AnyUp")
-    end
-    if selector:GetFontString() then
-        selector:GetFontString():SetDrawLayer("OVERLAY", 7)
-    end
-    selector:SetScript("OnClick", function(self)
-        hideActionSelectorMenus(self)
-        if not self.dltMenu then
-            createActionSelectorMenu(self)
-        end
-        if self.dltMenu:IsShown() then
-            self.dltMenu:Hide()
-        else
-            self.dltMenu:Show()
-        end
-    end)
-    return selector
-end
-
-local function createAutomationRow(parent, y, label, actions, itemLink)
-    local row = CreateFrame("Frame", nil, parent)
-    row:SetFrameLevel(parent:GetFrameLevel() + 1)
-    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, y)
-    row:SetPoint("TOPRIGHT", parent, "TOPRIGHT", 0, y)
-    row:SetHeight(28)
-    row.label = CreateFrame("Button", nil, row)
-    row.label:SetFrameLevel(row:GetFrameLevel() + 1)
-    row.label:EnableMouse(itemLink and true or false)
-    row.label:SetPoint("LEFT", row, "LEFT", 0, 0)
-    row.label:SetPoint("RIGHT", row, "RIGHT", -90, 0)
-    row.label:SetHeight(28)
-    row.labelText = createText(row.label, 12)
-    row.labelText:SetAllPoints(row.label)
-    row.labelText:SetJustifyH("RIGHT")
-    row.labelText:SetText(label)
-    row.labelText:SetTextColor(1, 1, 1)
-    row.labelText:SetDrawLayer("OVERLAY", 7)
-    if itemLink then
-        row.label:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetHyperlink(itemLink)
-            GameTooltip:Show()
-        end)
-        row.label:SetScript("OnLeave", function()
-            GameTooltip:Hide()
-        end)
-    end
-    row.selector = createActionSelector(row, actions)
-    row.selector:SetPoint("RIGHT", row, "RIGHT", 0, 0)
-    row.selector:SetFrameLevel(row:GetFrameLevel() + 2)
-    return row
-end
-
-local function refreshAutomationDialogValues()
-    if not automationDialog then
-        return
-    end
-    hideActionSelectorMenus()
-    local automation = ADDON.GetRollAutomation and ADDON.GetRollAutomation() or {}
-    setSelectorValue(automationDialog.controls.bossAction.selector, automation.bossAction)
-    setSelectorValue(automationDialog.controls.primordialSaroniteAction.selector, automation.primordialSaroniteAction)
-    setSelectorValue(automationDialog.controls.uncommonNormalAction.selector, automation.uncommonNormalAction)
-    setSelectorValue(automationDialog.controls.rareNormalAction.selector, automation.rareNormalAction)
-    setSelectorValue(automationDialog.controls.epicBoeNonBossAction.selector, automation.epicBoeNonBossAction)
-    if isIcecrownCitadel() then
-        automationDialog.controls.primordialSaroniteAction:ClearAllPoints()
-        automationDialog.controls.primordialSaroniteAction:SetPoint("TOPLEFT", automationDialog.content, "TOPLEFT", 0, -32)
-        automationDialog.controls.primordialSaroniteAction:SetPoint("TOPRIGHT", automationDialog.content, "TOPRIGHT", 0, -32)
-        automationDialog.controls.primordialSaroniteAction:Show()
-        automationDialog.controls.uncommonNormalAction:ClearAllPoints()
-        automationDialog.controls.uncommonNormalAction:SetPoint("TOPLEFT", automationDialog.content, "TOPLEFT", 0, -64)
-        automationDialog.controls.uncommonNormalAction:SetPoint("TOPRIGHT", automationDialog.content, "TOPRIGHT", 0, -64)
-        automationDialog.controls.rareNormalAction:ClearAllPoints()
-        automationDialog.controls.rareNormalAction:SetPoint("TOPLEFT", automationDialog.content, "TOPLEFT", 0, -96)
-        automationDialog.controls.rareNormalAction:SetPoint("TOPRIGHT", automationDialog.content, "TOPRIGHT", 0, -96)
-        automationDialog.controls.epicBoeNonBossAction:ClearAllPoints()
-        automationDialog.controls.epicBoeNonBossAction:SetPoint("TOPLEFT", automationDialog.content, "TOPLEFT", 0, -128)
-        automationDialog.controls.epicBoeNonBossAction:SetPoint("TOPRIGHT", automationDialog.content, "TOPRIGHT", 0, -128)
-        automationDialog:SetHeight(256)
-    else
-        automationDialog.controls.primordialSaroniteAction:Hide()
-        automationDialog.controls.uncommonNormalAction:ClearAllPoints()
-        automationDialog.controls.uncommonNormalAction:SetPoint("TOPLEFT", automationDialog.content, "TOPLEFT", 0, -32)
-        automationDialog.controls.uncommonNormalAction:SetPoint("TOPRIGHT", automationDialog.content, "TOPRIGHT", 0, -32)
-        automationDialog.controls.rareNormalAction:ClearAllPoints()
-        automationDialog.controls.rareNormalAction:SetPoint("TOPLEFT", automationDialog.content, "TOPLEFT", 0, -64)
-        automationDialog.controls.rareNormalAction:SetPoint("TOPRIGHT", automationDialog.content, "TOPRIGHT", 0, -64)
-        automationDialog.controls.epicBoeNonBossAction:ClearAllPoints()
-        automationDialog.controls.epicBoeNonBossAction:SetPoint("TOPLEFT", automationDialog.content, "TOPLEFT", 0, -96)
-        automationDialog.controls.epicBoeNonBossAction:SetPoint("TOPRIGHT", automationDialog.content, "TOPRIGHT", 0, -96)
-        automationDialog:SetHeight(224)
-    end
-end
-
-function ADDON.ShowAutomationDialog()
-    if not automationDialog then
-        automationDialog = CreateFrame("Frame", "DudesLootTrackerAutomationDialog", UIParent)
-        automationDialog:SetFrameStrata("DIALOG")
-        automationDialog:SetFrameLevel(200)
-        automationDialog:SetWidth(470)
-        automationDialog:SetHeight(256)
-        automationDialog:SetAlpha(1)
-        automationDialog:EnableMouse(true)
-        automationDialog:SetMovable(true)
-        automationDialog:RegisterForDrag("LeftButton")
-        automationDialog:SetScript("OnDragStart", function(self)
-            self:StartMoving()
-        end)
-        automationDialog:SetScript("OnDragStop", function(self)
-            self:StopMovingOrSizing()
-        end)
-        automationDialog:SetScript("OnHide", function()
-            hideActionSelectorMenus()
-        end)
-        setBackdrop(automationDialog, 0.02, 0.025, 0.035, 1)
-        automationDialog:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-        automationDialog.controls = {}
-
-        local title = createSectionTitle(automationDialog, "Würfel Automation")
-        title:SetDrawLayer("OVERLAY", 7)
-        title:SetFont(STANDARD_TEXT_FONT, 15, "")
-        title:SetTextColor(1, 0.48, 0.08)
-        title:SetPoint("TOPLEFT", automationDialog, "TOPLEFT", 0, -16)
-        title:SetPoint("RIGHT", automationDialog, "RIGHT", 0, 0)
-        title:SetJustifyH("CENTER")
-
-        local content = CreateFrame("Frame", nil, automationDialog)
-        automationDialog.content = content
-        content:SetFrameLevel(automationDialog:GetFrameLevel() + 1)
-        content:SetPoint("TOPLEFT", automationDialog, "TOPLEFT", 16, -54)
-        content:SetPoint("TOPRIGHT", automationDialog, "TOPRIGHT", -16, -54)
-        content:SetHeight(160)
-
-        local standardActions = { "manual", "pass", "disenchant", "greed" }
-        automationDialog.controls.bossAction = createAutomationRow(content, 0, "Beute von |cff" .. BOSS_TEXT_COLOR .. "Bossen|r", standardActions)
-        automationDialog.controls.primordialSaroniteAction = createAutomationRow(content, -32, PRIMORDIAL_SARONITE_LINK, { "manual", "pass", "greed", "need" }, PRIMORDIAL_SARONITE_LINK)
-        automationDialog.controls.uncommonNormalAction = createAutomationRow(content, -64, "|cff1eff00Ungewöhnliche|r Beute von normalen Gegnern", standardActions)
-        automationDialog.controls.rareNormalAction = createAutomationRow(content, -96, "|cff0070ddSeltene|r Beute von normalen Gegnern", standardActions)
-        automationDialog.controls.epicBoeNonBossAction = createAutomationRow(content, -128, "|cffa335eeEpische|r BoE Beute von normalen Gegnern", { "manual", "need", "pass", "disenchant", "greed" })
-
-        local apply = createSmallButton(automationDialog, "Anwenden", 112)
-        automationDialog.apply = apply
-        apply:SetFrameLevel(automationDialog:GetFrameLevel() + 2)
-        apply:Enable()
-        apply:EnableMouse(true)
-        apply:SetHeight(28)
-        if apply:GetFontString() then
-            apply:GetFontString():SetFont(STANDARD_TEXT_FONT, 12, "")
-        end
-        if apply.RegisterForClicks then
-            apply:RegisterForClicks("AnyUp")
-        end
-        apply:SetPoint("BOTTOM", automationDialog, "BOTTOM", 0, 8)
-        apply:SetScript("OnClick", function()
-            if ADDON.SetRollAutomation then
-                ADDON.SetRollAutomation({
-                    bossAction = automationDialog.controls.bossAction.selector.dltValue,
-                    primordialSaroniteAction = automationDialog.controls.primordialSaroniteAction.selector.dltValue,
-                    uncommonNormalAction = automationDialog.controls.uncommonNormalAction.selector.dltValue,
-                    rareNormalAction = automationDialog.controls.rareNormalAction.selector.dltValue,
-                    epicBoeNonBossAction = automationDialog.controls.epicBoeNonBossAction.selector.dltValue,
-                })
-            end
-            automationDialog:Hide()
-            if ADDON.RefreshMainWindow then
-                ADDON.RefreshMainWindow()
-            end
-        end)
-    end
-    refreshAutomationDialogValues()
-    automationDialog:Show()
-end
-
 function ADDON.CreateMainWindow()
     if window then
         return window
@@ -2173,15 +1912,6 @@ function ADDON.CreateMainWindow()
     window.settings:SetScript("OnClick", function()
         ADDON.ToggleSettings()
     end)
-    window.automationButton = createSmallButton(window, "Automation", 92)
-    setButtonTextColor(window.automationButton, 1, 0.48, 0.08)
-    if window.automationButton:GetFontString() then
-        window.automationButton:GetFontString():SetFont(STANDARD_TEXT_FONT, 10, "")
-    end
-    window.automationButton:SetScript("OnClick", function()
-        ADDON.ShowAutomationDialog()
-    end)
-
     window.controlScroll, window.controlContent = createScrollFrame("DudesLootTrackerControlScroll", window)
     window.lootScroll, window.lootContent = createScrollFrame("DudesLootTrackerLootScroll", window)
     local lootScrollBar = _G[window.lootScroll:GetName() .. "ScrollBar"]

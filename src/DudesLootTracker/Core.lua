@@ -4,11 +4,8 @@ local ADDON = DudesLootTracker
 local DEFAULT_SETTINGS = {
     showMinimapButton = true,
     minimapAngle = 260,
-    showAutomationDialogOnInstanceEnter = true,
+    autoGreedDisenchantUncommon = false,
     hideLootChatMessages = false,
-    autoOpenOnBossLoot = true,
-    autoOpenOnNormalLoot = false,
-    persistOnlyBossSegments = false,
     maxLootEntries = 900,
     window = {
         width = 880,
@@ -34,10 +31,6 @@ local DEFAULT_SETTINGS = {
             common = true,
             poor = true,
         },
-        enemies = {
-            boss = true,
-            normal = true,
-        },
         areas = {
             raid = true,
             instance = true,
@@ -48,7 +41,6 @@ local DEFAULT_SETTINGS = {
 
 local initialized
 local toggleButton
-local currentAutomationPromptInstanceKey
 
 BINDING_HEADER_DUDESADDONS = "Dude's Addons"
 BINDING_NAME_DUDESLOOTTRACKER_TOGGLE = "Dude's Loot Tracker: Fenster ein-/ausblenden"
@@ -148,7 +140,6 @@ function ADDON.InitDB()
         character.useCharacterSettings = false
     end
     character.segments = character.segments or {}
-    character.raidStates = character.raidStates or {}
     character.nextSegmentId = character.nextSegmentId or 1
     character.nextItemId = character.nextItemId or 1
 
@@ -238,82 +229,6 @@ function ADDON.GetCurrentRaidKey()
     }
 end
 
-function ADDON.GetRaidState()
-    local db = ADDON.GetCharacterDB()
-    local raidKey = ADDON.GetCurrentRaidKey()
-    db.raidStates[raidKey] = db.raidStates[raidKey] or {}
-    db.raidStates[raidKey].automation = db.raidStates[raidKey].automation or {
-        bossAction = "manual",
-        primordialSaroniteAction = "manual",
-        uncommonNormalAction = "manual",
-        rareNormalAction = "manual",
-        epicBoeNonBossAction = "manual",
-    }
-    return db.raidStates[raidKey], raidKey
-end
-
-function ADDON.GetRollAutomation()
-    local state = ADDON.GetRaidState()
-    state.automation = state.automation or {}
-    state.automation.bossAction = state.automation.bossAction or "manual"
-    state.automation.primordialSaroniteAction = state.automation.primordialSaroniteAction or "manual"
-    state.automation.uncommonNormalAction = state.automation.uncommonNormalAction or "manual"
-    state.automation.rareNormalAction = state.automation.rareNormalAction or "manual"
-    state.automation.epicBoeNonBossAction = state.automation.epicBoeNonBossAction or "manual"
-    return state.automation
-end
-
-function ADDON.SetRollAutomation(values)
-    local automation = ADDON.GetRollAutomation()
-    automation.bossAction = values and values.bossAction or "manual"
-    automation.primordialSaroniteAction = values and values.primordialSaroniteAction or "manual"
-    automation.uncommonNormalAction = values and values.uncommonNormalAction or "manual"
-    automation.rareNormalAction = values and values.rareNormalAction or "manual"
-    automation.epicBoeNonBossAction = values and values.epicBoeNonBossAction or "manual"
-    if ADDON.RefreshMainWindow then
-        ADDON.RefreshMainWindow()
-    end
-end
-
-local function refreshAutomationPrompt()
-    if not GetInstanceInfo then
-        return
-    end
-    local _, instanceType = GetInstanceInfo()
-    if instanceType ~= "party" and instanceType ~= "raid" then
-        currentAutomationPromptInstanceKey = nil
-        if ADDON.RefreshMainWindow then
-            ADDON.RefreshMainWindow()
-        end
-        return
-    end
-    local instanceKey = ADDON.GetCurrentRaidKey()
-    if currentAutomationPromptInstanceKey == instanceKey then
-        return
-    end
-    currentAutomationPromptInstanceKey = instanceKey
-    local state = ADDON.GetRaidState()
-    if state.automationInitialized then
-        if ADDON.RefreshMainWindow then
-            ADDON.RefreshMainWindow()
-        end
-        return
-    end
-    state.automationInitialized = true
-    ADDON.SetRollAutomation({})
-    if ADDON.GetSettings().showAutomationDialogOnInstanceEnter and ADDON.ShowAutomationDialog then
-        ADDON.ShowAutomationDialog()
-    end
-end
-
-local function scheduleAutomationPrompt()
-    if C_Timer and C_Timer.After then
-        C_Timer.After(1, refreshAutomationPrompt)
-    else
-        refreshAutomationPrompt()
-    end
-end
-
 local function ensureToggleButton()
     if toggleButton then
         return toggleButton
@@ -359,9 +274,6 @@ function ADDON.Initialize()
     if ADDON.PruneHistory then
         ADDON.PruneHistory()
     end
-    DudesUtils.EventHandler.Add("PLAYER_ENTERING_WORLD", scheduleAutomationPrompt)
-    DudesUtils.EventHandler.Add("ZONE_CHANGED_NEW_AREA", scheduleAutomationPrompt)
-    scheduleAutomationPrompt()
 end
 
 local function handleSlashCommand(message)

@@ -2035,6 +2035,9 @@ local function insertMacroTextFromClick(text)
     if not IsShiftKeyDown() then
         return false
     end
+    if ADDON.InsertMacroPlaceholderTextFromClick and ADDON.InsertMacroPlaceholderTextFromClick(text) then
+        return true
+    end
     if not editor or not editor:IsShown() or not editor.macroEditBox or editor.macroLocked then
         return false
     end
@@ -2054,9 +2057,6 @@ end
 
 local function insertSpellFromSpellBook(button)
     if not IsShiftKeyDown() then
-        return
-    end
-    if not editor or not editor:IsShown() then
         return
     end
 

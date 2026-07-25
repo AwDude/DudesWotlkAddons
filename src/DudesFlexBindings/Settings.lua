@@ -6,6 +6,7 @@ local layoutRows = {}
 local layoutMenu
 local importLayoutDialog
 local exportLayoutDialog
+local macroPlaceholderDialog
 local positionMinimapButton
 local bonusAnchorSelectorPopup
 local bonusGrowthSelectorPopup
@@ -191,6 +192,31 @@ local function layoutSettingsRows()
     end
 end
 
+local function layoutMacroPlaceholderRows()
+    if not optionsPanel or not optionsPanel.macroPlaceholderRows then
+        return
+    end
+
+    local panelWidth = optionsPanel:GetWidth() or 520
+    local rowWidth = clamp(panelWidth - 48, 260, 520)
+    local editWidth = 76
+    local deleteWidth = 76
+    local gap = 6
+    local textWidth = math.max(120, rowWidth - editWidth - deleteWidth - gap * 2 - 12)
+
+    for _, row in ipairs(optionsPanel.macroPlaceholderRows) do
+        row:SetWidth(rowWidth)
+        row.key:SetWidth(textWidth)
+        row.value:SetWidth(textWidth)
+        row.edit:ClearAllPoints()
+        row.edit:SetWidth(editWidth)
+        row.edit:SetPoint("TOPLEFT", row, "TOPLEFT", textWidth + 8, -5)
+        row.delete:ClearAllPoints()
+        row.delete:SetWidth(deleteWidth)
+        row.delete:SetPoint("LEFT", row.edit, "RIGHT", gap, 0)
+    end
+end
+
 local function layoutOptionsPanel()
     if not optionsPanel or not optionsPanel.scrollFrame or not optionsPanel.content then
         return
@@ -198,13 +224,29 @@ local function layoutOptionsPanel()
 
     local width = optionsPanel:GetWidth() or 620
     local height = optionsPanel:GetHeight() or 560
-    local contentHeight = math.max(980, height + 420)
+    local extraLayoutRows = math.max(0, (optionsPanel.layoutProfileCount or 0) - 8)
+    local macroPlaceholderRows = optionsPanel.macroPlaceholderCount or 0
+    local contentHeight = math.max(1090, height + 530) + extraLayoutRows * 38 + macroPlaceholderRows * 38
     optionsPanel.scrollFrame:ClearAllPoints()
     optionsPanel.scrollFrame:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 0, -4)
     optionsPanel.scrollFrame:SetPoint("BOTTOMRIGHT", optionsPanel, "BOTTOMRIGHT", -28, 4)
     optionsPanel.content:SetWidth(math.max(520, width - 34))
     optionsPanel.content:SetHeight(contentHeight)
     layoutSettingsRows()
+    layoutMacroPlaceholderRows()
+end
+
+local function formatLayoutCreatedAt(createdAt)
+    local year, month, day, timeText = string.match(tostring(createdAt or ""), "^(%d%d%d%d)%-(%d%d)%-(%d%d)%s*(.*)$")
+    if not year then
+        return createdAt or "-"
+    end
+
+    local formattedDate = day .. "." .. month .. "." .. string.sub(year, -2)
+    if timeText ~= "" then
+        return formattedDate .. " " .. timeText
+    end
+    return formattedDate
 end
 
 local function refreshLayoutRows()
@@ -212,16 +254,20 @@ local function refreshLayoutRows()
         return
     end
 
+    local profiles = ADDON.GetLayoutProfiles and ADDON.GetLayoutProfiles() or {}
+    optionsPanel.layoutProfileCount = #profiles
+    while #optionsPanel.layoutRows < #profiles do
+        optionsPanel.createLayoutRow(#optionsPanel.layoutRows + 1)
+    end
     layoutSettingsRows()
 
-    local profiles = ADDON.GetLayoutProfiles and ADDON.GetLayoutProfiles() or {}
     local lastVisibleRow
     for i, row in ipairs(optionsPanel.layoutRows) do
         local profile = profiles[i]
         row.profileId = profile and profile.id or nil
         if profile then
             row.name:SetText(profile.name or "")
-            row.meta:SetText((profile.createdAt or "-") .. "  " .. (profile.characterName or "-") .. "  " .. (profile.className or "-") .. "  " .. (profile.specText or "-"))
+            row.meta:SetText(formatLayoutCreatedAt(profile.createdAt) .. "  " .. (profile.characterName or "-") .. "  " .. (profile.className or "-") .. "  " .. (profile.specText or "-"))
             if profile.system then
                 row.menu:Hide()
             else
@@ -241,6 +287,7 @@ local function refreshLayoutRows()
             optionsPanel.bonusTitle:SetPoint("TOPLEFT", optionsPanel.saveLayoutButton, "BOTTOMLEFT", 0, -18)
         end
     end
+    layoutOptionsPanel()
 end
 
 local function setFrameEnabled(frame, enabled)
@@ -656,7 +703,7 @@ local function showLoadLayoutDialog(profileId, profileName)
         return
     end
 
-    local loadLayoutText = "Aktuelle Makros, Interface- und Bonusleisten-Belegungen des aktiven Specs werden ersetzt."
+    local loadLayoutText = "Aktuelle Makros, Makro-Platzhalter, Interface- und Bonusleisten-Belegungen des aktiven Specs werden ersetzt."
     local showAccountWarning = ADDON.IsCharacterBindingSetEnabled and not ADDON.IsCharacterBindingSetEnabled()
     if showAccountWarning then
         loadLayoutText = loadLayoutText .. "\n\n|cffff3333Warnung: Charakterspezifische Einstellungen sind nicht aktiv. Dadurch werden auch die gemeinsamen Interface-Belegungen für andere Charaktere geändert.|r"
@@ -692,6 +739,26 @@ local function showDeleteLayoutDialog(profileId, profileName)
         onAccept = function(_, data)
             if data.profileId and ADDON.DeleteLayoutProfile then
                 ADDON.DeleteLayoutProfile(data.profileId)
+                refreshLayoutRows()
+            end
+        end,
+    })
+end
+
+local function showOverwriteLayoutDialog(profileId, profileName)
+    if not profileId then
+        return
+    end
+
+    DudesUtils.Dialog.Show({
+        title = string.format("Layout '%s' überschreiben?", tostring(profileName or "")),
+        text = "Das gespeicherte Layout wird durch die aktuellen Makros, Makro-Platzhalter, Interface- und Bonusleisten-Belegungen des aktiven Specs ersetzt.",
+        width = 560,
+        acceptText = "Überschreiben",
+        cancelText = "Abbrechen",
+        data = { profileId = profileId },
+        onAccept = function(_, data)
+            if data.profileId and ADDON.OverwriteLayoutProfile and ADDON.OverwriteLayoutProfile(data.profileId) then
                 refreshLayoutRows()
             end
         end,
@@ -825,6 +892,201 @@ local function hideDialogError(dialog)
     if dialog and dialog.errorText then
         dialog.errorText:Hide()
     end
+end
+
+local function summarizeMacroPlaceholderText(text)
+    local summary = string.gsub(text or "", "[\r\n]+", " ")
+    summary = string.gsub(summary, "^%s+", "")
+    summary = string.gsub(summary, "%s+$", "")
+    if string.len(summary) > 62 then
+        summary = string.sub(summary, 1, 59) .. "..."
+    end
+    return summary
+end
+
+local function refreshMacroPlaceholderRows()
+    if not optionsPanel or not optionsPanel.macroPlaceholderRows then
+        return
+    end
+
+    local placeholders = ADDON.GetMacroPlaceholders and ADDON.GetMacroPlaceholders() or {}
+    optionsPanel.macroPlaceholderCount = #placeholders
+    while #optionsPanel.macroPlaceholderRows < #placeholders do
+        optionsPanel.createMacroPlaceholderRow(#optionsPanel.macroPlaceholderRows + 1)
+    end
+
+    local lastVisibleRow
+    for i, row in ipairs(optionsPanel.macroPlaceholderRows) do
+        local placeholder = placeholders[i]
+        if placeholder then
+            row.placeholderKey = placeholder.key
+            row.placeholderText = placeholder.text
+            row.key:SetText(placeholder.key)
+            row.value:SetText(summarizeMacroPlaceholderText(placeholder.text))
+            row:Show()
+            lastVisibleRow = row
+        else
+            row.placeholderKey = nil
+            row.placeholderText = nil
+            row:Hide()
+        end
+    end
+
+    if optionsPanel.macroPlaceholderTitle then
+        optionsPanel.macroPlaceholderTitle:SetText("Makro-Platzhalter (Spec " .. tostring(ADDON.GetCurrentSpecIndex and ADDON.GetCurrentSpecIndex() or 1) .. ")")
+    end
+    if optionsPanel.macroPlaceholderWarning then
+        local defined = {}
+        for _, placeholder in ipairs(placeholders) do
+            defined[string.lower(placeholder.key or "")] = true
+        end
+        local unresolved = {}
+        for _, binding in pairs(ADDON.GetCurrentSpecDB().bindings or {}) do
+            if type(binding) == "table" and type(binding.macrotext) == "string" then
+                for name in string.gmatch(binding.macrotext, "%$([A-Za-z0-9]+)") do
+                    local token = "$" .. name
+                    local canonicalToken = string.lower(token)
+                    if not defined[canonicalToken] and not unresolved[canonicalToken] then
+                        unresolved[canonicalToken] = token
+                    end
+                end
+            end
+        end
+        local unresolvedList = {}
+        for _, token in pairs(unresolved) do
+            table.insert(unresolvedList, token)
+        end
+        table.sort(unresolvedList, function(a, b)
+            return string.lower(a) < string.lower(b)
+        end)
+        if #unresolvedList > 0 then
+            optionsPanel.macroPlaceholderWarning:SetText("Nicht definiert: " .. table.concat(unresolvedList, ", "))
+            optionsPanel.macroPlaceholderWarning:Show()
+        else
+            optionsPanel.macroPlaceholderWarning:Hide()
+        end
+    end
+    if optionsPanel.layoutTitle then
+        optionsPanel.layoutTitle:ClearAllPoints()
+        if lastVisibleRow then
+            optionsPanel.layoutTitle:SetPoint("TOPLEFT", lastVisibleRow, "BOTTOMLEFT", 0, -18)
+        else
+            optionsPanel.layoutTitle:SetPoint("TOPLEFT", optionsPanel.addMacroPlaceholderButton, "BOTTOMLEFT", -2, -24)
+        end
+    end
+    layoutMacroPlaceholderRows()
+    layoutOptionsPanel()
+end
+
+local function saveMacroPlaceholderFromDialog()
+    if not macroPlaceholderDialog then
+        return
+    end
+
+    local key = macroPlaceholderDialog.keyEditBox:GetText() or ""
+    local macrotext = macroPlaceholderDialog.macroEditBox:GetText() or ""
+    local ok, reason = ADDON.SetMacroPlaceholder(key, macrotext, macroPlaceholderDialog.previousKey)
+    if ok then
+        macroPlaceholderDialog:Hide()
+        refreshMacroPlaceholderRows()
+        return
+    end
+
+    if reason == "duplicate" then
+        showDialogError(macroPlaceholderDialog, "Dieser Schlüssel ist bereits belegt (Groß-/Kleinschreibung wird ignoriert).")
+    elseif reason == "nested" then
+        showDialogError(macroPlaceholderDialog, "Der Ersetzungstext darf keine weiteren Makro-Platzhalter enthalten.")
+    elseif reason == "text" then
+        showDialogError(macroPlaceholderDialog, "Der Makrotext darf nicht leer sein.")
+    else
+        showDialogError(macroPlaceholderDialog, "Schlüssel müssen mit $ beginnen und dürfen danach nur A-Z, a-z und 0-9 enthalten.")
+    end
+end
+
+local function showMacroPlaceholderDialog(placeholderKey, placeholderText)
+    if not macroPlaceholderDialog then
+        macroPlaceholderDialog = createDialogFrame("DudesFlexBindingsMacroPlaceholderDialog", "Makro-Platzhalter anlegen", 520, 330)
+        makeFrameSolid(macroPlaceholderDialog, 0.045, 0.052, 0.065)
+
+        macroPlaceholderDialog.keyLabel = createText(macroPlaceholderDialog, 11)
+        macroPlaceholderDialog.keyLabel:SetPoint("TOPLEFT", macroPlaceholderDialog, "TOPLEFT", 16, -48)
+        macroPlaceholderDialog.keyLabel:SetText("Schlüssel (z. B. $MH1)")
+
+        macroPlaceholderDialog.keyEditBox = createDialogEditBox(macroPlaceholderDialog, 488, 22, false)
+        macroPlaceholderDialog.keyEditBox:SetPoint("TOPLEFT", macroPlaceholderDialog.keyLabel, "BOTTOMLEFT", 0, -6)
+        macroPlaceholderDialog.keyEditBox:SetMaxLetters(64)
+
+        macroPlaceholderDialog.macroLabel = createText(macroPlaceholderDialog, 11)
+        macroPlaceholderDialog.macroLabel:SetPoint("TOPLEFT", macroPlaceholderDialog.keyEditBox, "BOTTOMLEFT", 0, -14)
+        macroPlaceholderDialog.macroLabel:SetText("Makrotext")
+
+        macroPlaceholderDialog.macroTextBox, macroPlaceholderDialog.macroScroll, macroPlaceholderDialog.macroEditBox = createDialogScrollTextBox(macroPlaceholderDialog, "DudesFlexBindingsMacroPlaceholderScrollFrame", 488, 132, true)
+        macroPlaceholderDialog.macroTextBox:SetPoint("TOPLEFT", macroPlaceholderDialog.macroLabel, "BOTTOMLEFT", 0, -6)
+        macroPlaceholderDialog.macroTextBox:EnableMouse(true)
+        macroPlaceholderDialog.macroTextBox:SetScript("OnMouseDown", function()
+            macroPlaceholderDialog.macroEditBox:SetFocus()
+        end)
+        macroPlaceholderDialog.macroScroll:EnableMouse(true)
+        macroPlaceholderDialog.macroScroll:SetScript("OnMouseDown", function()
+            macroPlaceholderDialog.macroEditBox:SetFocus()
+        end)
+
+        macroPlaceholderDialog.errorText = createText(macroPlaceholderDialog, 10)
+        macroPlaceholderDialog.errorText:SetPoint("TOPLEFT", macroPlaceholderDialog.macroTextBox, "BOTTOMLEFT", 0, -8)
+        macroPlaceholderDialog.errorText:SetPoint("RIGHT", macroPlaceholderDialog, "RIGHT", -16, 0)
+        macroPlaceholderDialog.errorText:SetTextColor(1, 0.25, 0.18)
+        macroPlaceholderDialog.errorText:Hide()
+
+        macroPlaceholderDialog.saveButton = CreateFrame("Button", nil, macroPlaceholderDialog, "UIPanelButtonTemplate")
+        macroPlaceholderDialog.saveButton:SetWidth(110)
+        macroPlaceholderDialog.saveButton:SetHeight(24)
+        macroPlaceholderDialog.saveButton:SetPoint("BOTTOMRIGHT", macroPlaceholderDialog, "BOTTOMRIGHT", -16, 16)
+        macroPlaceholderDialog.saveButton:SetText("Speichern")
+        styleButton(macroPlaceholderDialog.saveButton)
+        macroPlaceholderDialog.saveButton:SetScript("OnClick", saveMacroPlaceholderFromDialog)
+        macroPlaceholderDialog.keyEditBox:SetScript("OnEnterPressed", function()
+            macroPlaceholderDialog.macroEditBox:SetFocus()
+        end)
+    end
+
+    macroPlaceholderDialog.previousKey = placeholderKey
+    macroPlaceholderDialog.title:SetText(placeholderKey and "Makro-Platzhalter bearbeiten" or "Makro-Platzhalter anlegen")
+    macroPlaceholderDialog.keyEditBox:SetText(placeholderKey or "$")
+    macroPlaceholderDialog.macroEditBox:SetText(placeholderText or "")
+    hideDialogError(macroPlaceholderDialog)
+    macroPlaceholderDialog:Show()
+    macroPlaceholderDialog.keyEditBox:SetFocus()
+end
+
+function ADDON.InsertMacroPlaceholderTextFromClick(text)
+    if not IsShiftKeyDown() or not macroPlaceholderDialog or not macroPlaceholderDialog:IsShown() or not macroPlaceholderDialog.macroEditBox then
+        return false
+    end
+    if not text or text == "" then
+        return false
+    end
+
+    macroPlaceholderDialog.macroEditBox:SetFocus()
+    macroPlaceholderDialog.macroEditBox:Insert(text)
+    return true
+end
+
+local function showDeleteMacroPlaceholderDialog(key)
+    if not key then
+        return
+    end
+    DudesUtils.Dialog.Show({
+        title = "Makro-Platzhalter löschen?",
+        text = "Der Platzhalter " .. tostring(key) .. " wird aus dem aktiven Spec entfernt. Verwendungen in Makros bleiben anschließend unverändert stehen.",
+        acceptText = "Löschen",
+        cancelText = "Abbrechen",
+        data = { key = key },
+        onAccept = function(_, data)
+            if ADDON.DeleteMacroPlaceholder(data.key) then
+                refreshMacroPlaceholderRows()
+            end
+        end,
+    })
 end
 
 local function importLayoutFromDialog()
@@ -988,7 +1250,7 @@ local function showLayoutMenu(owner, profileId, profileName)
     if not layoutMenu then
         layoutMenu = CreateFrame("Frame", "DudesFlexBindingsLayoutMenu", UIParent)
         layoutMenu:SetWidth(142)
-        layoutMenu:SetHeight(86)
+        layoutMenu:SetHeight(112)
         layoutMenu:SetFrameStrata("TOOLTIP")
         layoutMenu:SetFrameLevel(115)
         setBackdrop(layoutMenu, 0.045, 0.052, 0.065, 1)
@@ -996,11 +1258,15 @@ local function showLayoutMenu(owner, profileId, profileName)
             showExportLayoutDialog(layoutMenu.profileId, layoutMenu.profileName)
             layoutMenu:Hide()
         end)
-        layoutMenu.renameButton = createLayoutMenuButton(layoutMenu, 2, "Umbenennen", function()
+        layoutMenu.overwriteButton = createLayoutMenuButton(layoutMenu, 2, "Überschreiben", function()
+            showOverwriteLayoutDialog(layoutMenu.profileId, layoutMenu.profileName)
+            layoutMenu:Hide()
+        end)
+        layoutMenu.renameButton = createLayoutMenuButton(layoutMenu, 3, "Umbenennen", function()
             showRenameLayoutDialog(layoutMenu.profileId, layoutMenu.profileName)
             layoutMenu:Hide()
         end)
-        layoutMenu.deleteButton = createLayoutMenuButton(layoutMenu, 3, "Löschen", function()
+        layoutMenu.deleteButton = createLayoutMenuButton(layoutMenu, 4, "Löschen", function()
             showDeleteLayoutDialog(layoutMenu.profileId, layoutMenu.profileName)
             layoutMenu:Hide()
         end)
@@ -1107,9 +1373,73 @@ local function createOptionsPanel()
         end
     end)
 
+    local macroPlaceholderTitle = createText(content, 15)
+    macroPlaceholderTitle:SetPoint("TOPLEFT", openLayoutButton, "BOTTOMLEFT", -2, -24)
+    macroPlaceholderTitle:SetText("Makro-Platzhalter")
+    optionsPanel.macroPlaceholderTitle = macroPlaceholderTitle
+
+    local macroPlaceholderDescription = createText(content, 10)
+    macroPlaceholderDescription:SetPoint("TOPLEFT", macroPlaceholderTitle, "BOTTOMLEFT", 0, -6)
+    macroPlaceholderDescription:SetText("Spec-spezifisch; Schlüssel werden ohne Beachtung der Groß-/Kleinschreibung ersetzt.")
+    macroPlaceholderDescription:SetTextColor(0.72, 0.72, 0.72)
+
+    local addMacroPlaceholderButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    addMacroPlaceholderButton:SetWidth(120)
+    addMacroPlaceholderButton:SetHeight(24)
+    addMacroPlaceholderButton:SetPoint("TOPLEFT", macroPlaceholderDescription, "BOTTOMLEFT", 0, -8)
+    addMacroPlaceholderButton:SetText("Anlegen")
+    styleButton(addMacroPlaceholderButton)
+    addMacroPlaceholderButton:SetScript("OnClick", function()
+        showMacroPlaceholderDialog()
+    end)
+    optionsPanel.addMacroPlaceholderButton = addMacroPlaceholderButton
+
+    local macroPlaceholderWarning = createText(content, 10)
+    macroPlaceholderWarning:SetPoint("LEFT", addMacroPlaceholderButton, "RIGHT", 10, 0)
+    macroPlaceholderWarning:SetWidth(360)
+    macroPlaceholderWarning:SetTextColor(1, 0.55, 0.2)
+    macroPlaceholderWarning:Hide()
+    optionsPanel.macroPlaceholderWarning = macroPlaceholderWarning
+
+    optionsPanel.macroPlaceholderRows = {}
+    optionsPanel.createMacroPlaceholderRow = function(i)
+        local row = CreateFrame("Frame", nil, content)
+        row:SetWidth(260)
+        row:SetHeight(34)
+        row:SetPoint("TOPLEFT", addMacroPlaceholderButton, "BOTTOMLEFT", 0, -8 - (i - 1) * 38)
+
+        row.key = createText(row, 11)
+        row.key:SetPoint("TOPLEFT", row, "TOPLEFT", 0, -1)
+        row.key:SetTextColor(0.4, 0.8, 1)
+
+        row.value = createText(row, 9)
+        row.value:SetPoint("TOPLEFT", row.key, "BOTTOMLEFT", 0, -2)
+        row.value:SetTextColor(0.72, 0.72, 0.72)
+
+        row.edit = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        row.edit:SetHeight(22)
+        row.edit:SetText("Bearbeiten")
+        styleButton(row.edit)
+        row.edit:SetScript("OnClick", function(self)
+            local parent = self:GetParent()
+            showMacroPlaceholderDialog(parent.placeholderKey, parent.placeholderText)
+        end)
+
+        row.delete = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        row.delete:SetHeight(22)
+        row.delete:SetText("Löschen")
+        styleButton(row.delete)
+        row.delete:SetScript("OnClick", function(self)
+            showDeleteMacroPlaceholderDialog(self:GetParent().placeholderKey)
+        end)
+
+        optionsPanel.macroPlaceholderRows[i] = row
+    end
+
     local layoutTitle = createText(content, 15)
-    layoutTitle:SetPoint("TOPLEFT", openLayoutButton, "BOTTOMLEFT", -2, -24)
+    layoutTitle:SetPoint("TOPLEFT", addMacroPlaceholderButton, "BOTTOMLEFT", -2, -24)
     layoutTitle:SetText("Layouts")
+    optionsPanel.layoutTitle = layoutTitle
 
     local saveLayoutButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
     saveLayoutButton:SetWidth(120)
@@ -1130,7 +1460,7 @@ local function createOptionsPanel()
     optionsPanel.importLayoutButton = importLayoutButton
 
     optionsPanel.layoutRows = layoutRows
-    for i = 1, 8 do
+    optionsPanel.createLayoutRow = function(i)
         local row = CreateFrame("Frame", nil, content)
         row:SetWidth(260)
         row:SetHeight(34)
@@ -1172,6 +1502,9 @@ local function createOptionsPanel()
         end)
 
         layoutRows[i] = row
+    end
+    for i = 1, 8 do
+        optionsPanel.createLayoutRow(i)
     end
 
     local bonusTitle = createText(content, 15)
@@ -1265,6 +1598,7 @@ function ADDON.RefreshSettings()
     optionsPanel.minimapCheckbox:SetChecked(ADDON.GetSyncedSetting("showMinimapButton"))
     refreshMinimapButton()
     refreshBonusBarSettingsControls()
+    refreshMacroPlaceholderRows()
     refreshLayoutRows()
 end
 

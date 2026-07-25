@@ -194,13 +194,6 @@ function ADDON.GetInstanceContext()
     }
 end
 
-function ADDON.ClassifyLootSource(sourceName, fallbackType, unit)
-    if unit and UnitClassification and UnitClassification(unit) == "worldboss" then
-        return "boss"
-    end
-    return fallbackType or "normal"
-end
-
 function ADDON.GetLootMethodContext()
     local method, masterName = getLootMethodInfo()
     return {
@@ -208,20 +201,6 @@ function ADDON.GetLootMethodContext()
         masterName = masterName,
         label = method == "master" and "Plündermeister" or "Plündern als Gruppe",
     }
-end
-
-function ADDON.GetSegmentColor(segmentType)
-    if segmentType == "boss" or segmentType == "miniBoss" then
-        return 0.18, 0.10, 0.26, 0.92
-    end
-    return 0.075, 0.086, 0.108, 0.92
-end
-
-function ADDON.GetSegmentTypeLabel(segmentType)
-    if segmentType == "boss" or segmentType == "miniBoss" then
-        return "Boss Loot"
-    end
-    return "Loot"
 end
 
 function ADDON.AllocateSegmentId()
@@ -238,13 +217,12 @@ function ADDON.AllocateItemId()
     return id
 end
 
-function ADDON.CreateSegment(segmentType, sourceName)
+function ADDON.CreateSegment(sourceName)
     local context = ADDON.GetInstanceContext()
     local lootMethod = ADDON.GetLootMethodContext()
     local raidKey, raidInfo = ADDON.GetCurrentRaidKey()
     return {
         id = ADDON.AllocateSegmentId(),
-        type = segmentType or "normal",
         timestamp = ADDON.GetNow(),
         sourceName = sourceName,
         raid = context.raid,
@@ -278,14 +256,6 @@ function ADDON.PruneHistory()
     local db = ADDON.GetCharacterDB()
     local settings = ADDON.GetSettings()
     local segments = db.segments or {}
-
-    if settings.persistOnlyBossSegments then
-        for i = #segments, 1, -1 do
-            if segments[i].type == "normal" then
-                table.remove(segments, i)
-            end
-        end
-    end
 
     local maxLootEntries = tonumber(settings.maxLootEntries) or 0
     if maxLootEntries > 0 then

@@ -169,6 +169,7 @@ local function ensureSpec(character, specIndex)
     character.specs[specIndex] = character.specs[specIndex] or { bindings = {} }
     character.specs[specIndex].bindings = character.specs[specIndex].bindings or {}
     character.specs[specIndex].defaultBindings = character.specs[specIndex].defaultBindings or {}
+    character.specs[specIndex].macroPlaceholders = character.specs[specIndex].macroPlaceholders or {}
     if character.specs[specIndex].bonusBarBindings == nil then
         character.specs[specIndex].bonusBarBindings = DudesUtils.Table.Copy(BLIZZARD_DEFAULT_BONUS_BAR_BINDINGS)
     end
@@ -229,6 +230,7 @@ local function makeEmptyLayout()
         defaultBindings = {},
         bonusBarBindings = {},
         bonusBarSettings = copyTable(DEFAULT_BONUS_BAR_SETTINGS),
+        macroPlaceholders = {},
     }
 end
 
@@ -238,6 +240,7 @@ local function normalizeLayout(layout)
     layout.defaultBindings = layout.defaultBindings or {}
     layout.bonusBarBindings = layout.bonusBarBindings or {}
     layout.bonusBarSettings = ensureBonusBarSettings(layout.bonusBarSettings or {})
+    layout.macroPlaceholders = layout.macroPlaceholders or {}
     return layout
 end
 
@@ -247,6 +250,7 @@ local function buildBlizzardDefaultLayout()
         defaultBindings = copyTable(BLIZZARD_DEFAULT_BINDINGS),
         bonusBarBindings = copyTable(BLIZZARD_DEFAULT_BONUS_BAR_BINDINGS),
         bonusBarSettings = copyTable(DEFAULT_BONUS_BAR_SETTINGS),
+        macroPlaceholders = {},
     }
 end
 
@@ -258,6 +262,7 @@ local function getCurrentAppliedLayout()
         defaultBindings = copyTable(spec.defaultBindings),
         bonusBarBindings = copyTable(bonusSpec.bonusBarBindings),
         bonusBarSettings = copyTable(ADDON.GetBonusBarSettings()),
+        macroPlaceholders = copyTable(spec.macroPlaceholders),
     }
 end
 
@@ -529,6 +534,90 @@ end
 
 function ADDON.GetAppliedLayout()
     return getCurrentAppliedLayout()
+end
+
+local function normalizeMacroPlaceholderKey(key)
+    if type(key) ~= "string" or not string.match(key, "^%$[A-Za-z0-9]+$") then
+        return nil
+    end
+    return string.lower(key)
+end
+
+function ADDON.GetMacroPlaceholders()
+    local placeholders = {}
+    for canonicalKey, placeholder in pairs(ADDON.GetCurrentSpecDB().macroPlaceholders or {}) do
+        if type(placeholder) == "table" then
+            table.insert(placeholders, {
+                canonicalKey = canonicalKey,
+                key = placeholder.key or canonicalKey,
+                text = placeholder.text or "",
+            })
+        end
+    end
+    table.sort(placeholders, function(a, b)
+        return a.canonicalKey < b.canonicalKey
+    end)
+    return placeholders
+end
+
+function ADDON.SetMacroPlaceholder(key, text, previousKey)
+    local canonicalKey = normalizeMacroPlaceholderKey(key)
+    if not canonicalKey then
+        return false, "key"
+    end
+    if type(text) ~= "string" or text == "" then
+        return false, "text"
+    end
+    if string.match(text, "%$[A-Za-z0-9]+") then
+        return false, "nested"
+    end
+
+    local spec = ADDON.GetCurrentSpecDB()
+    local placeholders = spec.macroPlaceholders
+    local previousCanonicalKey = normalizeMacroPlaceholderKey(previousKey)
+    if placeholders[canonicalKey] and canonicalKey ~= previousCanonicalKey then
+        return false, "duplicate"
+    end
+
+    if previousCanonicalKey and previousCanonicalKey ~= canonicalKey then
+        placeholders[previousCanonicalKey] = nil
+    end
+    placeholders[canonicalKey] = {
+        key = key,
+        text = text,
+    }
+
+    ADDON.ApplyRuntime()
+    if ADDON.RefreshSettings then
+        ADDON.RefreshSettings()
+    end
+    return true
+end
+
+function ADDON.DeleteMacroPlaceholder(key)
+    local canonicalKey = normalizeMacroPlaceholderKey(key)
+    local placeholders = ADDON.GetCurrentSpecDB().macroPlaceholders
+    if not canonicalKey or not placeholders[canonicalKey] then
+        return false
+    end
+    placeholders[canonicalKey] = nil
+    ADDON.ApplyRuntime()
+    if ADDON.RefreshSettings then
+        ADDON.RefreshSettings()
+    end
+    return true
+end
+
+function ADDON.ExpandMacroPlaceholders(macrotext)
+    local placeholders = ADDON.GetCurrentSpecDB().macroPlaceholders or {}
+    return string.gsub(macrotext or "", "%$([A-Za-z0-9]+)", function(name)
+        local token = "$" .. name
+        local placeholder = placeholders[string.lower(token)]
+        if placeholder and type(placeholder.text) == "string" then
+            return placeholder.text
+        end
+        return token
+    end)
 end
 
 function ADDON.GetBinding(key)
@@ -1114,6 +1203,7 @@ end
 
 local function setRuntimeVariantAttributes(button, binding, bonusBindings)
     local macrotext = binding and binding.macrotext or ""
+    macrotext = ADDON.ExpandMacroPlaceholders(macrotext)
     button.dkmBonusBarBindings = bonusBindings or {}
     local runtimeMacro = buildRuntimeMacro(bonusBindings, macrotext)
 
@@ -1328,6 +1418,7 @@ local function makeProfile(name, layout, systemId, protected)
         defaultBindings = copyTable((layout or {}).defaultBindings),
         bonusBarBindings = copyTable((layout or {}).bonusBarBindings),
         bonusBarSettings = copyTable((layout or {}).bonusBarSettings or DEFAULT_BONUS_BAR_SETTINGS),
+        macroPlaceholders = copyTable((layout or {}).macroPlaceholders or {}),
     }
 end
 
@@ -1493,6 +1584,24 @@ local function sanitizeBonusBarSettings(settings)
     return ensureBonusBarSettings(sanitized)
 end
 
+local function sanitizeMacroPlaceholders(placeholders)
+    local sanitized = {}
+    for storedKey, placeholder in pairs(type(placeholders) == "table" and placeholders or {}) do
+        if type(placeholder) == "table" then
+            local key = type(placeholder.key) == "string" and placeholder.key or storedKey
+            local canonicalKey = normalizeMacroPlaceholderKey(key)
+            local text = placeholder.text
+            if canonicalKey and type(text) == "string" and text ~= "" and not string.match(text, "%$[A-Za-z0-9]+") and not sanitized[canonicalKey] then
+                sanitized[canonicalKey] = {
+                    key = key,
+                    text = text,
+                }
+            end
+        end
+    end
+    return sanitized
+end
+
 local function sanitizeImportedLayout(layout)
     if type(layout) ~= "table" then
         return nil
@@ -1502,6 +1611,7 @@ local function sanitizeImportedLayout(layout)
         defaultBindings = sanitizeDefaultBindings(layout.defaultBindings),
         bonusBarBindings = sanitizeBonusBarBindings(layout.bonusBarBindings),
         bonusBarSettings = sanitizeBonusBarSettings(layout.bonusBarSettings),
+        macroPlaceholders = sanitizeMacroPlaceholders(layout.macroPlaceholders),
     }
 end
 
@@ -1560,6 +1670,7 @@ function ADDON.LoadLayout(layout)
     spec.defaultBindings = copyTable(layout.defaultBindings or {})
     bonusSpec.bonusBarBindings = copyTable(layout.bonusBarBindings or {})
     copyBonusBarSettings(ADDON.GetBonusBarSettings(), layout.bonusBarSettings or DEFAULT_BONUS_BAR_SETTINGS)
+    spec.macroPlaceholders = sanitizeMacroPlaceholders(layout.macroPlaceholders)
 
     applyCurrentDefaultBindings(true)
 
@@ -1583,6 +1694,7 @@ function ADDON.LoadLayoutProfile(profileId)
         defaultBindings = profile.defaultBindings or {},
         bonusBarBindings = profile.bonusBarBindings or {},
         bonusBarSettings = profile.bonusBarSettings or DEFAULT_BONUS_BAR_SETTINGS,
+        macroPlaceholders = profile.macroPlaceholders or {},
     }) then
         return false
     end
@@ -1603,6 +1715,19 @@ function ADDON.SaveAppliedLayoutProfile(name)
     return true
 end
 
+function ADDON.OverwriteLayoutProfile(profileId)
+    ADDON.InitDB()
+    local profile = findLayoutProfile(profileId)
+    if not profile or profile.system then
+        return false
+    end
+
+    local name = profile.name or profileId
+    DudesFlexBindingsDB.savedLayouts[profileId] = makeProfile(name, getCurrentAppliedLayout(), profileId, false)
+    printMessage("Overwrote layout '" .. name .. "'.")
+    return true
+end
+
 function ADDON.ExportLayoutProfile(profileId)
     local profile = findLayoutProfile(profileId)
     if not profile or profile.system then
@@ -1613,6 +1738,7 @@ function ADDON.ExportLayoutProfile(profileId)
         defaultBindings = profile.defaultBindings or {},
         bonusBarBindings = profile.bonusBarBindings or {},
         bonusBarSettings = profile.bonusBarSettings or DEFAULT_BONUS_BAR_SETTINGS,
+        macroPlaceholders = profile.macroPlaceholders or {},
     })
 end
 
@@ -1708,6 +1834,9 @@ local function refreshForWorldState()
     ADDON.ResetDraftToApplied()
     applyCurrentDefaultBindings(false)
     ADDON.ApplyRuntime()
+    if ADDON.RefreshSettings then
+        ADDON.RefreshSettings()
+    end
     if ADDON.RefreshOverlay then
         ADDON.RefreshOverlay()
     end

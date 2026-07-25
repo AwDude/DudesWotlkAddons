@@ -1,20 +1,15 @@
 local ADDON = DudesLootTracker
 
-local lastBossKill
 local currentLootSegment
-local lastNormalLootTime
+local lastLootTime
 local pendingLootDecisions = {}
 local pendingRollSelections = {}
 local pendingRollItems = {}
 local pendingDisenchantLoots = {}
 local registeredLootChatFilter
-local knownBossGuids = {}
-local autoOpenedSegments = {}
-local autoOpenedLootSources = {}
 local formatPatternCache = {}
 local LOOT_GROUP_SECONDS = 8
 local PENDING_DECISION_SECONDS = 120
-local BOSS_LOOT_SECONDS = 300
 local DISENCHANT_REWARD_SECONDS = 60
 local DISENCHANT_MATERIAL_IDS = {
     [10938] = true, [10939] = true, [10940] = true, [10978] = true,
@@ -179,134 +174,27 @@ local function isUnknownName(name)
         or (UNKNOWNOBJECT and name == UNKNOWNOBJECT)
 end
 
-local function shouldAutoOpen(segmentType)
-    local settings = ADDON.GetSettings()
-    if segmentType == "boss" or segmentType == "miniBoss" then
-        return settings.autoOpenOnBossLoot
-    end
-    return settings.autoOpenOnNormalLoot
-end
-
-local function autoOpenSegment(segment)
-    if not segment or autoOpenedSegments[segment.id] then
-        return
-    end
-    autoOpenedSegments[segment.id] = true
-    if shouldAutoOpen(segment.type) and ADDON.RequestShowWindow then
-        ADDON.RequestShowWindow()
-    end
-end
-
-local function autoOpenLootSource(segment, sourceGuid)
-    if not segment then
-        return
-    end
-    local sourceKey = sourceGuid or ("segment:" .. tostring(segment.id))
-    if autoOpenedLootSources[sourceKey] then
-        return
-    end
-    autoOpenedLootSources[sourceKey] = true
-    autoOpenedSegments[segment.id] = true
-    if shouldAutoOpen(segment.type) and ADDON.RequestShowWindow then
-        ADDON.RequestShowWindow()
-    end
-end
-
 local function getLootSourceName()
     if UnitName and UnitExists and UnitExists("target") and UnitIsDead("target") then
         local name = UnitName("target")
         if not isUnknownName(name) then
             return name
         end
-        local guid = UnitGUID and UnitGUID("target")
-        if guid and knownBossGuids[guid] then
-            return knownBossGuids[guid]
-        end
-    end
-    if lastBossKill and ADDON.GetNow() - (lastBossKill.timestamp or 0) < 300 then
-        return lastBossKill.name
     end
     return nil
 end
 
-local function getLootSourceUnit()
-    if UnitExists and UnitExists("target") and UnitIsDead and UnitIsDead("target") then
-        return "target"
-    end
-    return nil
-end
-
-local function getLootSourceGuid()
-    local unit = getLootSourceUnit()
-    return unit and UnitGUID and UnitGUID(unit) or nil
-end
-
-local function rememberBossUnit(unit)
-    if not UnitExists or not UnitExists(unit) or not UnitClassification or UnitClassification(unit) ~= "worldboss" then
-        return
-    end
-    local guid = UnitGUID and UnitGUID(unit)
-    local name = UnitName and UnitName(unit)
-    if guid and not isUnknownName(name) then
-        knownBossGuids[guid] = name
-    end
-end
-
-local function scanBossUnits()
-    rememberBossUnit("target")
-    rememberBossUnit("focus")
-    rememberBossUnit("mouseover")
-    local raidCount = GetNumRaidMembers and GetNumRaidMembers() or 0
-    for i = 1, raidCount do
-        rememberBossUnit("raid" .. tostring(i) .. "target")
-    end
-    local partyCount = GetNumPartyMembers and GetNumPartyMembers() or 0
-    for i = 1, partyCount do
-        rememberBossUnit("party" .. tostring(i) .. "target")
-    end
-end
-
-local function handleBossKill(bossName)
-    if isUnknownName(bossName) then
-        return
-    end
-    lastBossKill = {
-        name = bossName,
-        timestamp = ADDON.GetNow(),
-    }
-    currentLootSegment = nil
-end
-
-local function isBossContext(segmentType)
-    if segmentType == "boss" or segmentType == "miniBoss" then
-        return true
-    end
-    if lastBossKill and ADDON.GetNow() - (lastBossKill.timestamp or 0) < 180 then
-        return true
-    end
-    return false
-end
-
-local function createOrReuseSegment(segmentType, sourceName)
+local function createOrReuseSegment(sourceName)
     local now = ADDON.GetNow()
-    if segmentType == "normal" and currentLootSegment and currentLootSegment.type == "normal" and now - (lastNormalLootTime or 0) <= LOOT_GROUP_SECONDS then
-        lastNormalLootTime = now
-        return currentLootSegment, false
-    end
-    if segmentType ~= "normal"
-        and currentLootSegment
-        and currentLootSegment.type ~= "normal"
-        and currentLootSegment.sourceName == sourceName
-        and now - (currentLootSegment.timestamp or 0) <= BOSS_LOOT_SECONDS then
+    if currentLootSegment and now - (lastLootTime or 0) <= LOOT_GROUP_SECONDS then
+        lastLootTime = now
         return currentLootSegment, false
     end
 
-    local segment = ADDON.CreateSegment(segmentType, sourceName)
+    local segment = ADDON.CreateSegment(sourceName)
     ADDON.AddSegment(segment)
     currentLootSegment = segment
-    if segmentType == "normal" then
-        lastNormalLootTime = now
-    end
+    lastLootTime = now
     return segment, true
 end
 
@@ -877,12 +765,6 @@ local function handleLootMessage(message, recipientHint)
     end
 
     local sourceName = getLootSourceName()
-    local sourceUnit = getLootSourceUnit()
-    local classified = ADDON.ClassifyLootSource(sourceName, "normal", sourceUnit)
-    if lastBossKill and ADDON.GetNow() - (lastBossKill.timestamp or 0) < 180 then
-        classified = ADDON.ClassifyLootSource(lastBossKill.name, "boss")
-        sourceName = lastBossKill.name
-    end
 
     local recipient = rollWinner or parseLootRecipient(message) or (recipientHint ~= "" and recipientHint or nil)
     if not recipient and isSelfLootMessage(message) then
@@ -895,7 +777,7 @@ local function handleLootMessage(message, recipientHint)
     for _, link in ipairs(links) do
         local isEmblem = ADDON.IsEmblem and ADDON.IsEmblem(link)
         if not isEmblem or isPlayerRecipient(recipient) then
-            segment = segment or createOrReuseSegment(classified, sourceName)
+            segment = segment or createOrReuseSegment(sourceName)
             local itemId = ADDON.GetItemId(link)
             local rollInfo
             if rollWinner then
@@ -919,9 +801,6 @@ local function handleLootMessage(message, recipientHint)
         end
     end
 
-    if segment then
-        autoOpenSegment(segment)
-    end
     if segment and ADDON.RequestRefreshMainWindow then
         ADDON.RequestRefreshMainWindow()
     end
@@ -949,46 +828,15 @@ function ADDON.SetPendingLootDecision(item, method)
     end
 end
 
-local function handleEncounterEnd(encounterName, success)
-    if success == 1 or success == true then
-        handleBossKill(encounterName)
-    end
-end
-
-local function handleCombatLogEvent(_, timestamp, subEvent, sourceGUID, sourceName, sourceFlags, destGUID, destName)
-    if subEvent ~= "UNIT_DIED" and subEvent ~= "UNIT_DESTROYED" then
-        return
-    end
-    scanBossUnits()
-    local bossName = destGUID and knownBossGuids[destGUID]
-    if bossName then
-        handleEncounterEnd(bossName, true)
-        knownBossGuids[destGUID] = nil
-    end
-end
-
 local function handleLootOpened()
-    local sourceUnit = getLootSourceUnit()
-    local sourceGuid = getLootSourceGuid()
     local sourceName = getLootSourceName()
-    local segmentType = ADDON.ClassifyLootSource(sourceName, "normal", sourceUnit)
-    if segmentType == "boss" and not isUnknownName(sourceName) then
-        lastBossKill = {
-            name = sourceName,
-            timestamp = ADDON.GetNow(),
-        }
-    end
-    if isBossContext(segmentType) and lastBossKill then
-        segmentType = ADDON.ClassifyLootSource(lastBossKill.name, "boss")
-        sourceName = lastBossKill.name
-    end
 
     if GetNumLootItems and GetLootSlotLink then
         local segment
         for slot = 1, GetNumLootItems() do
             local link = GetLootSlotLink(slot)
             if link then
-                segment = segment or createOrReuseSegment(segmentType, sourceName)
+                segment = segment or createOrReuseSegment(sourceName)
                 if not (ADDON.IsEmblem and ADDON.IsEmblem(link)) then
                     local texture, itemName, quantity = GetLootSlotInfo and GetLootSlotInfo(slot)
                     addItemToSegment(segment, link, nil, nil, quantity)
@@ -996,7 +844,6 @@ local function handleLootOpened()
             end
         end
         if segment then
-            autoOpenLootSource(segment, sourceGuid)
             if ADDON.RequestRefreshMainWindow then
                 ADDON.RequestRefreshMainWindow()
             end
@@ -1014,26 +861,15 @@ function ADDON.TrackRollLootItem(link)
     if item then
         item.blizzardRollStarted = true
         rememberPendingRollItem(item)
-        if segment then
-            autoOpenSegment(segment)
-        end
         return item, segment
     end
 
-    local segmentType = "normal"
     local sourceName = getLootSourceName()
-    if lastBossKill and ADDON.GetNow() - (lastBossKill.timestamp or 0) < 180 then
-        segmentType = ADDON.ClassifyLootSource(lastBossKill.name, "boss")
-        sourceName = lastBossKill.name
-    else
-        segmentType = ADDON.ClassifyLootSource(sourceName, "normal", getLootSourceUnit())
-    end
-    segment = createOrReuseSegment(segmentType, sourceName)
+    segment = createOrReuseSegment(sourceName)
     item = addItemToSegment(segment, link)
     if item then
         item.blizzardRollStarted = true
         rememberPendingRollItem(item)
-        autoOpenSegment(segment)
     end
     return item, segment
 end
@@ -1051,9 +887,4 @@ function ADDON.InitializeTracker()
     DudesUtils.EventHandler.Add("LOOT_OPENED", function()
         handleLootOpened()
     end)
-    DudesUtils.EventHandler.Add("PLAYER_TARGET_CHANGED", scanBossUnits)
-    DudesUtils.EventHandler.Add("UNIT_TARGET", scanBossUnits)
-    DudesUtils.EventHandler.Add("UPDATE_MOUSEOVER_UNIT", scanBossUnits)
-    DudesUtils.EventHandler.Add("COMBAT_LOG_EVENT_UNFILTERED", handleCombatLogEvent)
-    scanBossUnits()
 end
