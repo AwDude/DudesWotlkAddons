@@ -1,0 +1,12 @@
+## Interface: 30300
+## Title: Dude's Rolls
+## Notes: Automates and improves group loot rolls.
+## Version: 1.0
+## Author: Dude
+## SavedVariables: DudesRollsDB, DudesRolls_ActiveRolls
+## Dependencies: DudesUtils
+## OptionalDependencies: DudesFlexFrames, DudesLootTracker
+
+Core.lua
+RollFrames.lua
+Settings.lua

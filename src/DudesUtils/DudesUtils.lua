@@ -4,6 +4,7 @@ DudesUtils.String = DudesUtils.String or {}
 DudesUtils.Table = DudesUtils.Table or {}
 DudesUtils.EventHandler = DudesUtils.EventHandler or {}
 DudesUtils.Dialog = DudesUtils.Dialog or {}
+DudesUtils.SettingsUI = DudesUtils.SettingsUI or {}
 
 local hiddenFrame = hiddenFrame or CreateFrame("Frame")
 local nextUpdateCallbacks = {}
@@ -138,6 +139,100 @@ function DudesUtils.Table.Equals(a, b)
 	return true
 end
 
+-- -- -- -- -- -- -- -- SETTINGS UI -- -- -- -- -- -- -- --
+
+local SETTINGS_TEXT_SIZES = {
+    title = 18,
+    section = 14,
+    normal = 11,
+    small = 10,
+    button = 11,
+}
+
+function DudesUtils.SettingsUI.ApplyTextStyle(fontString, style, justify)
+    if not fontString then
+        return fontString
+    end
+    local size = type(style) == "number" and style or SETTINGS_TEXT_SIZES[style or "normal"] or SETTINGS_TEXT_SIZES.normal
+    fontString:SetFont(STANDARD_TEXT_FONT, size, "")
+    fontString:SetTextColor(1, 1, 1)
+    fontString:SetJustifyH(justify or "LEFT")
+    if fontString.SetWordWrap then
+        fontString:SetWordWrap(true)
+    end
+    if fontString.SetNonSpaceWrap then
+        fontString:SetNonSpaceWrap(true)
+    end
+    return fontString
+end
+
+function DudesUtils.SettingsUI.CreateText(parent, style, justify)
+    local text = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    return DudesUtils.SettingsUI.ApplyTextStyle(text, style, justify)
+end
+
+function DudesUtils.SettingsUI.StyleButtonText(button)
+    if button and button.GetFontString then
+        DudesUtils.SettingsUI.ApplyTextStyle(button:GetFontString(), "button", "CENTER")
+    end
+end
+
+function DudesUtils.SettingsUI.CreateScrollablePanel(frameName, categoryName, scrollName, contentName)
+    local panel = CreateFrame("Frame", frameName, UIParent)
+    panel.name = categoryName
+    panel.scrollFrame = CreateFrame("ScrollFrame", scrollName, panel, "UIPanelScrollFrameTemplate")
+    panel.content = CreateFrame("Frame", contentName, panel.scrollFrame)
+    panel.scrollFrame:SetScrollChild(panel.content)
+    panel.scrollFrame:EnableMouseWheel(true)
+    panel.scrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        local scrollBar = _G[self:GetName() .. "ScrollBar"]
+        if not scrollBar then
+            return
+        end
+        local value = scrollBar:GetValue() or 0
+        local minValue, maxValue = scrollBar:GetMinMaxValues()
+        value = math.max(minValue or 0, math.min(maxValue or 0, value - delta * 32))
+        scrollBar:SetValue(value)
+    end)
+    return panel, panel.scrollFrame, panel.content
+end
+
+function DudesUtils.SettingsUI.LayoutScrollablePanel(panel, contentHeight)
+    if not panel or not panel.scrollFrame or not panel.content then
+        return
+    end
+    local width = panel:GetWidth() or 620
+    local height = panel:GetHeight() or 560
+    if width <= 0 then
+        width = 620
+    end
+    if height <= 0 then
+        height = 560
+    end
+    panel.scrollFrame:ClearAllPoints()
+    panel.scrollFrame:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -4)
+    panel.scrollFrame:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -28, 4)
+    panel.content:SetWidth(math.max(260, width - 34))
+    panel.content:SetHeight(math.max(tonumber(contentHeight) or 1, height - 8))
+end
+
+function DudesUtils.SettingsUI.AnchorTextToContent(text, content, rightInset)
+    if text and content then
+        text:SetPoint("RIGHT", content, "RIGHT", -(rightInset or 16), 0)
+    end
+    return text
+end
+
+function DudesUtils.SettingsUI.CreateCheckboxLabel(checkbox, content, label)
+    local text = DudesUtils.SettingsUI.CreateText(checkbox, "normal")
+    text:SetPoint("LEFT", checkbox, "RIGHT", 2, 1)
+    text:SetPoint("RIGHT", content, "RIGHT", -16, 0)
+    text:SetHeight(24)
+    text:SetText(label)
+    checkbox.text = text
+    return text
+end
+
 -- -- -- -- -- -- -- -- NEXT UPDATE -- -- -- -- -- -- -- --
 
 function DudesUtils.OnNextUpdate(callback)
@@ -182,7 +277,7 @@ local function createDialogButton(parent)
     label:SetAllPoints(button)
     label:SetJustifyH("CENTER")
     label:SetJustifyV("MIDDLE")
-    label:SetTextColor(0.86, 0.92, 1)
+    label:SetTextColor(1, 1, 1)
     button:SetFontString(label)
 
     button:SetScript("OnEnter", function(self)
@@ -328,12 +423,13 @@ local function createDialogFrame()
     frame.editBox = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
     frame.editBox:SetHeight(24)
     frame.editBox:SetAutoFocus(false)
-    frame.editBox:SetFontObject(ChatFontNormal)
+    frame.editBox:SetFont(STANDARD_TEXT_FONT, SETTINGS_TEXT_SIZES.normal, "")
+    frame.editBox:SetTextColor(1, 1, 1)
     frame.editBox:SetTextInsets(6, 6, 0, 0)
 
     frame.errorText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     frame.errorText:SetJustifyH("LEFT")
-    frame.errorText:SetTextColor(1, 0.25, 0.18)
+    frame.errorText:SetTextColor(1, 1, 1)
     frame.errorText:SetWordWrap(true)
     if frame.errorText.SetNonSpaceWrap then
         frame.errorText:SetNonSpaceWrap(true)

@@ -1,29 +1,14 @@
 local ADDON = DudesLootTracker
 
-local currentLootSegment
-local lastLootTime
-local pendingLootDecisions = {}
-local pendingRollSelections = {}
-local pendingRollItems = {}
-local pendingDisenchantLoots = {}
+local activeRollsById = {}
+local activeRollItemsByItemId = {}
+local activeRollCountsByItemId = {}
+local closedRollItemsByItemId = {}
+local rollItemsAwaitingAwardByItemId = {}
+local activeRollCount = 0
 local registeredLootChatFilter
+local registeredRollHook
 local formatPatternCache = {}
-local recentDeadSource
-local LOOT_GROUP_SECONDS = 8
-local RECENT_SOURCE_SECONDS = 30
-local PENDING_DECISION_SECONDS = 120
-local DISENCHANT_REWARD_SECONDS = 60
-local DISENCHANT_MATERIAL_IDS = {
-    [10938] = true, [10939] = true, [10940] = true, [10978] = true,
-    [10998] = true, [11082] = true, [11083] = true, [11084] = true,
-    [11134] = true, [11135] = true, [11137] = true, [11138] = true,
-    [11139] = true, [11174] = true, [11175] = true, [11176] = true,
-    [11177] = true, [11178] = true, [14343] = true, [14344] = true,
-    [16202] = true, [16203] = true, [16204] = true, [20725] = true,
-    [22445] = true, [22446] = true, [22447] = true, [22448] = true,
-    [22449] = true, [22450] = true, [34052] = true, [34053] = true,
-    [34054] = true, [34055] = true, [34056] = true, [34057] = true,
-}
 
 local function compileFormatPattern(formatText)
     if not formatText or formatText == "" then
@@ -32,14 +17,21 @@ local function compileFormatPattern(formatText)
     if formatPatternCache[formatText] then
         return formatPatternCache[formatText]
     end
+
     local pattern = "^"
     local index = 1
     while index <= #formatText do
         local character = string.sub(formatText, index, index)
-        if character == "%" then
+        if character ~= "%" then
+            if string.find("^$()%.[]*+-?", character, 1, true) then
+                pattern = pattern .. "%" .. character
+            else
+                pattern = pattern .. character
+            end
+            index = index + 1
+        else
             local nextIndex = index + 1
-            local nextCharacter = string.sub(formatText, nextIndex, nextIndex)
-            if nextCharacter == "%" then
+            if string.sub(formatText, nextIndex, nextIndex) == "%" then
                 pattern = pattern .. "%%"
                 index = index + 2
             else
@@ -61,15 +53,9 @@ local function compileFormatPattern(formatText)
                     index = index + 1
                 end
             end
-        else
-            if string.find("^$()%.[]*+-?", character, 1, true) then
-                pattern = pattern .. "%" .. character
-            else
-                pattern = pattern .. character
-            end
-            index = index + 1
         end
     end
+
     pattern = pattern .. "$"
     formatPatternCache[formatText] = pattern
     return pattern
@@ -87,847 +73,503 @@ local function matchLocalizedFormat(message, formatText)
     return captures
 end
 
-local function cleanRecipientName(name)
+local function cleanPlayerName(name)
     if not name then
         return nil
     end
     name = string.match(name, "|h%[(.-)%]|h") or name
     name = string.gsub(name, "|c%x%x%x%x%x%x%x%x", "")
     name = string.gsub(name, "|r", "")
-    return name
+    return name ~= "" and name or nil
 end
 
-local function getRecipientKey(name)
-    name = cleanRecipientName(name)
-    name = name and string.match(name, "^([^%-]+)") or name
+local function getPlayerKey(name)
+    name = cleanPlayerName(name)
+    name = name and string.match(name, "^([^%-]+)") or nil
     return name and string.lower(name) or nil
 end
 
-local ROLL_SELECTION_FORMATS = {
-    { method = "need", text = LOOT_ROLL_NEED },
-    { method = "greed", text = LOOT_ROLL_GREED },
-    { method = "disenchant", text = LOOT_ROLL_DISENCHANT },
+local function isLocalPlayer(name)
+    return getPlayerKey(name) == getPlayerKey(UnitName and UnitName("player"))
+end
+
+local function getCaptureValues(captures)
+    local playerName
+    local number
+    for _, value in ipairs(captures or {}) do
+        if string.match(value, "^%d+$") then
+            number = tonumber(value)
+        elseif not string.find(value, "|Hitem:", 1, true) then
+            playerName = cleanPlayerName(value)
+        end
+    end
+    return playerName, number
+end
+
+local function refreshWindow()
+    if ADDON.RequestRefreshMainWindow then
+        ADDON.RequestRefreshMainWindow()
+    end
+end
+
+local function createStorageBatch(kind)
+    local segment = ADDON.CreateSegment(kind)
+    ADDON.AddSegment(segment)
+    return segment
+end
+
+local function findItemInSegment(segment, itemId)
+    for _, item in ipairs(segment and segment.items or {}) do
+        if item.itemId == itemId then
+            return item
+        end
+    end
+    return nil
+end
+
+local function addRecipient(item, name, method, count, mergeRecipient)
+    name = cleanPlayerName(name)
+    if not item or not name then
+        return nil
+    end
+
+    item.recipients = item.recipients or {}
+    count = math.max(1, tonumber(count) or 1)
+    if mergeRecipient then
+        local key = getPlayerKey(name)
+        for _, recipient in ipairs(item.recipients) do
+            if getPlayerKey(recipient.name) == key then
+                recipient.count = (tonumber(recipient.count) or 0) + count
+                recipient.timestamp = ADDON.GetNow()
+                recipient.method = method or recipient.method
+                return recipient
+            end
+        end
+    end
+
+    local recipient = {
+        name = name,
+        method = method,
+        count = count,
+        timestamp = ADDON.GetNow(),
+    }
+    table.insert(item.recipients, recipient)
+    return recipient
+end
+
+local function findRecipient(item, name, predicate)
+    local key = getPlayerKey(name)
+    if not item or not key then
+        return nil
+    end
+    for _, recipient in ipairs(item.recipients or {}) do
+        if getPlayerKey(recipient.name) == key and (not predicate or predicate(recipient)) then
+            return recipient
+        end
+    end
+    return nil
+end
+
+local function addOrUpdateRollWinner(item, name, method)
+    local recipient = findRecipient(item, name, function(entry)
+        return not entry.winnerRecorded
+    end)
+    if not recipient then
+        recipient = addRecipient(item, name, method, 1, false)
+    end
+    if recipient then
+        recipient.method = method or recipient.method
+        recipient.timestamp = ADDON.GetNow()
+        recipient.winnerRecorded = true
+    end
+    return recipient
+end
+
+local function clearCompletedRollAward(item)
+    if not item or not item.itemId or not item.rollComplete then
+        return
+    end
+    for _, recipient in ipairs(item.recipients or {}) do
+        if recipient.winnerRecorded and not recipient.awardConfirmed then
+            return
+        end
+    end
+    rollItemsAwaitingAwardByItemId[item.itemId] = nil
+end
+
+local function confirmRollAward(link, recipient, count)
+    local itemId = ADDON.GetItemId(link)
+    local item = itemId and (activeRollItemsByItemId[itemId]
+        or closedRollItemsByItemId[itemId]
+        or rollItemsAwaitingAwardByItemId[itemId])
+    if not item or not item.blizzardRollStarted then
+        return nil
+    end
+
+    local entry = findRecipient(item, recipient, function(candidate)
+        return not candidate.awardConfirmed
+    end)
+    if not entry and not item.rollComplete then
+        entry = addRecipient(item, recipient, "roll", count, false)
+    end
+    if not entry then
+        return nil
+    end
+
+    entry.awardConfirmed = true
+    entry.count = math.max(tonumber(entry.count) or 1, tonumber(count) or 1)
+    entry.timestamp = ADDON.GetNow()
+    clearCompletedRollAward(item)
+    return item
+end
+
+local function addAward(segment, link, recipient, method, count)
+    local itemId = ADDON.GetItemId(link)
+    local isEmblem = ADDON.IsEmblem and ADDON.IsEmblem(link)
+    local item = isEmblem and findItemInSegment(segment, itemId) or nil
+    if not item then
+        item = ADDON.AddItemToSegment(segment, link, count)
+    end
+    if not item then
+        return nil
+    end
+
+    if isEmblem then
+        addRecipient(item, recipient, method, count, true)
+        local perPersonCount = 0
+        for _, entry in ipairs(item.recipients or {}) do
+            perPersonCount = math.max(perPersonCount, tonumber(entry.count) or 1)
+        end
+        item.count = math.max(1, perPersonCount)
+    else
+        addRecipient(item, recipient, method, count, false)
+    end
+    return item
+end
+
+local AWARD_FORMATS = {
+    { text = LOOT_ITEM_SELF_MULTIPLE, self = true },
+    { text = LOOT_ITEM_SELF, self = true },
+    { text = LOOT_ITEM_MULTIPLE, self = false },
+    { text = LOOT_ITEM, self = false },
+    { text = LOOT_ITEM_PUSHED_SELF_MULTIPLE, self = true },
+    { text = LOOT_ITEM_PUSHED_SELF, self = true },
 }
 
-local function recordRollSelection(message, links)
-    local itemId = links and links[1] and ADDON.GetItemId(links[1])
-    if not itemId then
-        return false
+local function parseAward(message)
+    for _, definition in ipairs(AWARD_FORMATS) do
+        local captures = matchLocalizedFormat(message, definition.text)
+        if captures then
+            local recipient, count = getCaptureValues(captures)
+            if definition.self then
+                recipient = UnitName and UnitName("player")
+            end
+            return recipient, count or 1
+        end
     end
+    return nil
+end
+
+local ROLL_SELECTION_FORMATS = {
+    { text = LOOT_ROLL_NEED_SELF, method = "need", self = true },
+    { text = LOOT_ROLL_NEED, method = "need" },
+    { text = LOOT_ROLL_GREED_SELF, method = "greed", self = true },
+    { text = LOOT_ROLL_GREED, method = "greed" },
+    { text = LOOT_ROLL_DISENCHANT_SELF, method = "disenchant", self = true },
+    { text = LOOT_ROLL_DISENCHANT, method = "disenchant" },
+    { text = LOOT_ROLL_PASSED_SELF, method = "pass", self = true },
+    { text = LOOT_ROLL_PASSED_SELF_AUTO, method = "pass", self = true },
+    { text = LOOT_ROLL_PASSED, method = "pass" },
+    { text = LOOT_ROLL_PASSED_AUTO, method = "pass" },
+    { text = LOOT_ROLL_PASSED_AUTO_FEMALE, method = "pass" },
+}
+
+local ROLL_RESULT_FORMATS = {
+    { text = LOOT_ROLL_ROLLED_NEED, method = "need" },
+    { text = LOOT_ROLL_ROLLED_GREED, method = "greed" },
+    { text = LOOT_ROLL_ROLLED_DE, method = "disenchant" },
+}
+
+local ROLL_WINNER_FORMATS = {
+    { text = LOOT_ROLL_YOU_WON_NO_SPAM_NEED, self = true, method = "need", incomplete = true },
+    { text = LOOT_ROLL_YOU_WON_NO_SPAM_GREED, self = true, method = "greed", incomplete = true },
+    { text = LOOT_ROLL_YOU_WON_NO_SPAM_DE, self = true, method = "disenchant", incomplete = true },
+    { text = LOOT_ROLL_WON_NO_SPAM_NEED, method = "need", incomplete = true },
+    { text = LOOT_ROLL_WON_NO_SPAM_GREED, method = "greed", incomplete = true },
+    { text = LOOT_ROLL_WON_NO_SPAM_DE, method = "disenchant", incomplete = true },
+    { text = LOOT_ROLL_YOU_WON, self = true },
+    { text = LOOT_ROLL_WON, self = false },
+}
+
+local function createStandaloneRollItem(link)
+    local segment = createStorageBatch("roll")
+    local item = ADDON.AddItemToSegment(segment, link, 1)
+    if item then
+        item.blizzardRollStarted = true
+        item.rollHistoryIncomplete = true
+        rollItemsAwaitingAwardByItemId[item.itemId] = item
+    end
+    return item
+end
+
+local function getRollItem(link, allowStandalone)
+    local itemId = ADDON.GetItemId(link)
+    local item = itemId and (activeRollItemsByItemId[itemId]
+        or closedRollItemsByItemId[itemId]
+        or rollItemsAwaitingAwardByItemId[itemId])
+    if item or not allowStandalone then
+        return item
+    end
+    return createStandaloneRollItem(link)
+end
+
+local function addRollSelection(item, playerName, method, rollId)
+    playerName = cleanPlayerName(playerName)
+    if not item or not playerName or not method then
+        return nil
+    end
+    item.rolls = item.rolls or {}
+    local roll = {
+        name = playerName,
+        method = method,
+        timestamp = ADDON.GetNow(),
+        rollId = rollId,
+    }
+    table.insert(item.rolls, roll)
+    return roll
+end
+
+local function addRollResult(item, playerName, method, result)
+    playerName = cleanPlayerName(playerName)
+    if not item or not playerName or not method or not result then
+        return nil
+    end
+    item.rolls = item.rolls or {}
+    local key = getPlayerKey(playerName)
+    for _, roll in ipairs(item.rolls) do
+        if getPlayerKey(roll.name) == key and roll.method == method and roll.result == nil then
+            roll.result = result
+            roll.timestamp = ADDON.GetNow()
+            return roll
+        end
+    end
+    local roll = addRollSelection(item, playerName, method)
+    roll.result = result
+    return roll
+end
+
+local function getWinnerRoll(item, playerName, method)
+    local key = getPlayerKey(playerName)
+    local bestRoll
+    local bestResult = -1
+    for _, roll in ipairs(item and item.rolls or {}) do
+        if getPlayerKey(roll.name) == key
+            and roll.method ~= "pass"
+            and (not method or roll.method == method)
+            and not roll.won then
+            local result = tonumber(roll.result) or -1
+            if result > bestResult then
+                bestResult = result
+                bestRoll = roll
+            end
+        end
+    end
+    return bestRoll
+end
+
+local function handleRollSelection(message, link)
     for _, definition in ipairs(ROLL_SELECTION_FORMATS) do
         local captures = matchLocalizedFormat(message, definition.text)
         if captures then
-            local recipient
-            for _, value in ipairs(captures) do
-                if not string.find(value, "|Hitem:", 1, true) and not string.match(value, "^%d+$") then
-                    recipient = value
-                end
+            local playerName = getCaptureValues(captures)
+            if definition.self then
+                playerName = UnitName and UnitName("player")
             end
-            recipient = recipient or (UnitName and UnitName("player"))
-            local key = getRecipientKey(recipient)
-            if key then
-                pendingRollSelections[itemId] = pendingRollSelections[itemId] or {
-                    recipients = {},
-                    timestamp = ADDON.GetNow(),
-                }
-                pendingRollSelections[itemId].recipients[key] = definition.method
-                pendingRollSelections[itemId].timestamp = ADDON.GetNow()
+            local item = getRollItem(link, false)
+            -- RollOnLoot records local choices without depending on chat verbosity.
+            if definition.method == "pass" or not isLocalPlayer(playerName) then
+                addRollSelection(item, playerName, definition.method)
             end
+            refreshWindow()
             return true
         end
     end
     return false
 end
 
-local function getRollSelection(itemId, recipient)
-    local pending = itemId and pendingRollSelections[itemId]
-    if not pending then
-        return nil
-    end
-    if ADDON.GetNow() - (pending.timestamp or 0) > PENDING_DECISION_SECONDS then
-        pendingRollSelections[itemId] = nil
-        return nil
-    end
-    local key = getRecipientKey(recipient)
-    return key and pending.recipients[key] or nil
-end
-
-local function parseRollWinner(message)
-    local captures = matchLocalizedFormat(message, LOOT_ROLL_YOU_WON)
-    if captures then
-        return UnitName and UnitName("player")
-    end
-    captures = matchLocalizedFormat(message, LOOT_ROLL_WON)
-    if captures then
-        for _, value in ipairs(captures) do
-            if not string.find(value, "|Hitem:", 1, true) and not string.match(value, "^%d+$") then
-                return cleanRecipientName(value)
-            end
+local function handleRollResult(message, link)
+    for _, definition in ipairs(ROLL_RESULT_FORMATS) do
+        local captures = matchLocalizedFormat(message, definition.text)
+        if captures then
+            local playerName, result = getCaptureValues(captures)
+            addRollResult(getRollItem(link, false), playerName, definition.method, result)
+            refreshWindow()
+            return true
         end
-    end
-    return nil
-end
-
-local function isUnknownName(name)
-    return not name
-        or name == ""
-        or name == "Unbekannt"
-        or name == "Unknown"
-        or (UNKNOWNOBJECT and name == UNKNOWNOBJECT)
-end
-
-local function rememberDeadSource(guid, name)
-    if not guid or isUnknownName(name) then
-        return
-    end
-    recentDeadSource = {
-        guid = guid,
-        name = name,
-        timestamp = ADDON.GetNow(),
-    }
-end
-
-local function getUnitLootSourceName(unit)
-    if not UnitExists or not UnitExists(unit) then
-        return nil
-    end
-    if UnitCanAttack and not UnitCanAttack("player", unit) then
-        return nil
-    end
-    if UnitIsDeadOrGhost then
-        if not UnitIsDeadOrGhost(unit) then
-            return nil
-        end
-    elseif UnitIsDead and not UnitIsDead(unit) then
-        return nil
-    end
-    local name = UnitName and UnitName(unit)
-    if isUnknownName(name) then
-        return nil
-    end
-    local guid = UnitGUID and UnitGUID(unit)
-    rememberDeadSource(guid, name)
-    return name
-end
-
-local function getLootSourceName()
-    -- With autoloot the target can disappear before CHAT_MSG_LOOT arrives.
-    -- Mouseover still points at the corpse while LOOT_OPENED is being handled.
-    local name = getUnitLootSourceName("target") or getUnitLootSourceName("mouseover")
-    if name then
-        return name
-    end
-
-    if recentDeadSource
-        and ADDON.GetNow() - (recentDeadSource.timestamp or 0) <= RECENT_SOURCE_SECONDS then
-        return recentDeadSource.name
-    end
-    recentDeadSource = nil
-    return nil
-end
-
-local function createOrReuseSegment(sourceName)
-    local now = ADDON.GetNow()
-    if currentLootSegment and now - (lastLootTime or 0) <= LOOT_GROUP_SECONDS then
-        if isUnknownName(currentLootSegment.sourceName) and not isUnknownName(sourceName) then
-            currentLootSegment.sourceName = sourceName
-        end
-        lastLootTime = now
-        return currentLootSegment, false
-    end
-
-    local segment = ADDON.CreateSegment(sourceName)
-    ADDON.AddSegment(segment)
-    currentLootSegment = segment
-    lastLootTime = now
-    return segment, true
-end
-
-local function captureDeadUnit(_, timestamp, subEvent, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags)
-    if subEvent ~= "UNIT_DIED" and subEvent ~= "UNIT_DESTROYED" then
-        return
-    end
-    if destFlags and bit and bit.band and COMBATLOG_OBJECT_REACTION_HOSTILE
-        and bit.band(destFlags, COMBATLOG_OBJECT_REACTION_HOSTILE) == 0 then
-        return
-    end
-    rememberDeadSource(destGUID, destName)
-end
-
-local function resolveRecipientMethod(defaultMethod, rollInfo, item)
-    if rollInfo and rollInfo.method then
-        return rollInfo.method
-    end
-    if defaultMethod == "loot" and item and item.blizzardRollStarted and item.rollMethod then
-        return item.rollMethod
-    end
-    return defaultMethod
-end
-
-local function addItemToSegment(segment, link, recipient, rollInfo, count)
-    local itemId = ADDON.GetItemId(link)
-    local recipientMethod = (rollInfo and rollInfo.method) or (segment and segment.lootMethod == "master" and "master") or "loot"
-    if rollInfo and rollInfo.itemDbId and recipient and recipient ~= "" then
-        local tracked = ADDON.FindItemById(rollInfo.itemDbId)
-        if tracked then
-            local method = resolveRecipientMethod(recipientMethod, rollInfo, tracked)
-            tracked.count = math.max(tonumber(tracked.count or 1) or 1, tonumber(count or 1) or 1)
-            tracked.recipients = tracked.recipients or {}
-            local existingRecipient
-            for _, trackedRecipient in ipairs(tracked.recipients) do
-                if getRecipientKey(trackedRecipient.name) == getRecipientKey(recipient) then
-                    existingRecipient = trackedRecipient
-                    break
-                end
-            end
-            if existingRecipient then
-                if not existingRecipient.method or existingRecipient.method == "loot" or method ~= "loot" then
-                    existingRecipient.method = method
-                end
-            else
-                table.insert(tracked.recipients, { name = recipient, method = method, timestamp = ADDON.GetNow() })
-            end
-            return tracked
-        end
-    end
-    for _, existing in ipairs(segment.items or {}) do
-        if existing.itemId == itemId then
-            local age = ADDON.GetNow() - (existing.timestamp or 0)
-            local hasRecipient = #(existing.recipients or {}) > 0
-            local sameRecipient
-            local sameRecipientEntry
-            for _, existingRecipient in ipairs(existing.recipients or {}) do
-                if recipient and getRecipientKey(existingRecipient.name) == getRecipientKey(recipient) then
-                    sameRecipient = true
-                    sameRecipientEntry = existingRecipient
-                    break
-                end
-            end
-            if age <= PENDING_DECISION_SECONDS and (not recipient or sameRecipient) then
-                existing.count = math.max(tonumber(existing.count or 1) or 1, tonumber(count or 1) or 1)
-                if sameRecipientEntry then
-                    local method = resolveRecipientMethod(recipientMethod, rollInfo, existing)
-                    if not sameRecipientEntry.method or sameRecipientEntry.method == "loot" or method ~= "loot" then
-                        sameRecipientEntry.method = method
-                    end
-                end
-                return existing
-            end
-            if age <= 3 then
-                existing.count = math.max(tonumber(existing.count or 1) or 1, tonumber(count or 1) or 1)
-                if recipient and recipient ~= "" and not hasRecipient then
-                    existing.recipients = existing.recipients or {}
-                    table.insert(existing.recipients, {
-                        name = recipient,
-                        method = resolveRecipientMethod(recipientMethod, rollInfo, existing),
-                        timestamp = ADDON.GetNow(),
-                    })
-                    return existing
-                end
-            end
-        end
-    end
-
-    if recipient and recipient ~= "" then
-        for i = #(segment.items or {}), 1, -1 do
-            local existing = segment.items[i]
-            if existing.itemId == itemId and #(existing.recipients or {}) == 0 then
-                local method = resolveRecipientMethod(recipientMethod, rollInfo, existing)
-                existing.count = math.max(tonumber(existing.count or 1) or 1, tonumber(count or 1) or 1)
-                existing.recipients = existing.recipients or {}
-                table.insert(existing.recipients, { name = recipient, method = method, timestamp = ADDON.GetNow() })
-                return existing
-            end
-        end
-    end
-
-    local tracked
-    if rollInfo and rollInfo.itemDbId then
-        tracked = ADDON.FindItemById(rollInfo.itemDbId)
-    else
-        tracked = itemId and ADDON.FindRecipientCandidateByItemId(itemId)
-    end
-    if tracked and recipient and recipient ~= "" then
-        local method = resolveRecipientMethod(recipientMethod, rollInfo, tracked)
-        tracked.count = math.max(tonumber(tracked.count or 1) or 1, tonumber(count or 1) or 1)
-        tracked.recipients = tracked.recipients or {}
-        local found
-        for _, trackedRecipient in ipairs(tracked.recipients) do
-            if trackedRecipient.name == recipient then
-                trackedRecipient.method = method or trackedRecipient.method or "loot"
-                found = true
-                break
-            end
-        end
-        if not found then
-            table.insert(tracked.recipients, { name = recipient, method = method, timestamp = ADDON.GetNow() })
-        end
-        return tracked
-    end
-
-    local item = ADDON.BuildItem(link, count)
-    item.id = ADDON.AllocateItemId()
-    item.timestamp = ADDON.GetNow()
-    if rollInfo and rollInfo.method then
-        item.rollMethod = rollInfo.method
-    end
-    if recipient and recipient ~= "" then
-        table.insert(item.recipients, {
-            name = recipient,
-            method = resolveRecipientMethod(recipientMethod, rollInfo, item),
-            timestamp = ADDON.GetNow(),
-        })
-    end
-    table.insert(segment.items, item)
-    return item
-end
-
-local function consumePendingLootDecision(itemId)
-    local decision = itemId and pendingLootDecisions[itemId]
-    if not decision then
-        return nil
-    end
-    if ADDON.GetNow() - (decision.timestamp or 0) > PENDING_DECISION_SECONDS then
-        pendingLootDecisions[itemId] = nil
-        return nil
-    end
-    pendingLootDecisions[itemId] = nil
-    return decision
-end
-
-local function rememberPendingRollItem(item)
-    if not item or not item.itemId or not item.id then
-        return
-    end
-    local items = pendingRollItems[item.itemId] or {}
-    pendingRollItems[item.itemId] = items
-    for _, itemDbId in ipairs(items) do
-        if itemDbId == item.id then
-            return
-        end
-    end
-    table.insert(items, item.id)
-end
-
-local function consumePendingRollItem(itemId)
-    local items = itemId and pendingRollItems[itemId]
-    if not items then
-        return nil
-    end
-    while #items > 0 do
-        local itemDbId = table.remove(items, 1)
-        local item = ADDON.FindItemById(itemDbId)
-        if item
-            and item.blizzardRollStarted
-            and #(item.recipients or {}) == 0
-            and ADDON.GetNow() - (item.timestamp or 0) <= PENDING_DECISION_SECONDS then
-            if #items == 0 then
-                pendingRollItems[itemId] = nil
-            end
-            return { itemDbId = itemDbId }
-        end
-    end
-    pendingRollItems[itemId] = nil
-    return nil
-end
-
-local function parseLootRecipient(message)
-    if not message then
-        return nil
-    end
-
-    local player = UnitName and UnitName("player")
-    if player and string.find(message, "You receive loot", 1, true) then
-        return player
-    end
-    if player and string.find(message, "Ihr erhaltet Beute", 1, true) then
-        return player
-    end
-
-    local recipient = string.match(message, "^([^%s]+) receives loot")
-    if recipient then
-        return recipient
-    end
-    recipient = string.match(message, "^([^%s]+) erhält Beute")
-    if recipient then
-        return recipient
-    end
-    recipient = string.match(message, "^([^%s]+) bekommt")
-    return recipient
-end
-
-local function isPlayerRecipient(recipient)
-    local player = UnitName and UnitName("player")
-    if not player or not recipient then
-        return false
-    end
-    if recipient == player then
-        return true
-    end
-    return string.match(recipient, "^([^%-]+)") == player
-end
-
-local function isSelfLootMessage(message)
-    return message and (
-        string.find(message, "You receive", 1, true)
-        or string.find(message, "Ihr erhaltet", 1, true)
-    )
-end
-
-local function getLootCount(message, link)
-    local _, linkEnd = string.find(message or "", link or "", 1, true)
-    if not linkEnd then
-        return 1
-    end
-    local suffix = string.sub(message, linkEnd + 1)
-    local count = string.match(suffix, "^%s*[xX]%s*(%d+)")
-        or string.match(suffix, "[xX]%s*(%d+)")
-    return math.max(1, tonumber(count) or 1)
-end
-
-local function isLootMessage(message)
-    if not message then
-        return false
-    end
-    if string.find(message, "loot", 1, true) or string.find(message, "Loot", 1, true) then
-        return true
-    end
-    if string.find(message, "Beute", 1, true) then
-        return true
     end
     return false
 end
 
-local function isSelfItemReceiveMessage(message)
-    if not message then
-        return false
-    end
-    if string.find(message, "You receive item", 1, true) then
-        return true
-    end
-    if string.find(message, "You receive an item", 1, true) then
-        return true
-    end
-    if string.find(message, "Ihr erhaltet Gegenstand", 1, true) then
-        return true
-    end
-    if string.find(message, "Ihr erhaltet einen Gegenstand", 1, true) then
-        return true
-    end
-    if string.find(message, "Ihr erhaltet den Gegenstand", 1, true) then
-        return true
-    end
-    return false
-end
-
-local function isDisenchantMaterial(link)
-    if not link then
-        return false
-    end
-    local itemId = ADDON.GetItemId(link)
-    if itemId and DISENCHANT_MATERIAL_IDS[itemId] then
-        return true
-    end
-    if not GetItemInfo then
-        return false
-    end
-    local name, itemLink, quality, itemLevel, requiredLevel, itemType, itemSubType = GetItemInfo(link)
-    local subType = itemSubType and string.lower(itemSubType) or ""
-    return subType == "enchanting" or subType == "verzauberkunst"
-end
-
-local function addDisenchantReward(source, link, count)
-    source.disenchantRewards = source.disenchantRewards or {}
-    local itemId = ADDON.GetItemId(link)
-    for _, reward in ipairs(source.disenchantRewards) do
-        if type(reward) == "table" and reward.itemId == itemId then
-            reward.count = (tonumber(reward.count) or 1) + (tonumber(count) or 1)
-            return
-        end
-    end
-    table.insert(source.disenchantRewards, {
-        itemId = itemId,
-        link = link,
-        count = tonumber(count) or 1,
-    })
-end
-
-local function rememberPendingDisenchantLoot(item, recipient)
-    local recipientKey = getRecipientKey(recipient)
-    if not item or not item.id or not recipientKey then
-        return
-    end
-    for _, pending in ipairs(pendingDisenchantLoots) do
-        if pending.itemId == item.id then
-            return
-        end
-    end
-    table.insert(pendingDisenchantLoots, {
-        itemId = item.id,
-        recipientKey = recipientKey,
-        timestamp = ADDON.GetNow(),
-    })
-end
-
-local function captureDisenchantRewards(message, links)
-    local hasMaterial
-    for _, link in ipairs(links or {}) do
-        if isDisenchantMaterial(link) then
-            hasMaterial = true
-            break
-        end
-    end
-    if not hasMaterial then
-        return false
-    end
-    local rewardRecipient = parseLootRecipient(message)
-    if not rewardRecipient and (isSelfLootMessage(message) or isSelfItemReceiveMessage(message)) then
-        rewardRecipient = UnitName and UnitName("player")
-    end
-    local recipientKey = getRecipientKey(rewardRecipient)
-    if not recipientKey then
-        return false
-    end
-    local source
-    local pendingIndex
-    local now = ADDON.GetNow()
-    for i = #pendingDisenchantLoots, 1, -1 do
-        local pending = pendingDisenchantLoots[i]
-        if now - (pending.timestamp or 0) > DISENCHANT_REWARD_SECONDS
-            or not ADDON.FindItemById(pending.itemId) then
-            table.remove(pendingDisenchantLoots, i)
-        end
-    end
-    for i, pending in ipairs(pendingDisenchantLoots) do
-        if pending.recipientKey == recipientKey then
-            source = ADDON.FindItemById(pending.itemId)
-            pendingIndex = i
-            break
-        end
-    end
-    if not source and pendingDisenchantLoots[1] then
-        source = ADDON.FindItemById(pendingDisenchantLoots[1].itemId)
-        pendingIndex = source and 1 or nil
-    end
-    if not source then
-        return false
-    end
-    local added
-    for _, link in ipairs(links or {}) do
-        if isDisenchantMaterial(link) then
-            addDisenchantReward(source, link, getLootCount(message, link))
-            added = true
-        end
-    end
-    if added and pendingIndex then
-        table.remove(pendingDisenchantLoots, pendingIndex)
-    end
-    if added and ADDON.RequestRefreshMainWindow then
-        ADDON.RequestRefreshMainWindow()
-    end
-    return added and true or false
-end
-
-local function getDisenchantRecipientKey(item)
-    for _, recipient in ipairs(item and item.recipients or {}) do
-        if recipient.method == "disenchant" then
-            return getRecipientKey(recipient.name)
-        end
-    end
-    if item and item.rollMethod == "disenchant" and item.recipients and item.recipients[1] then
-        return getRecipientKey(item.recipients[1].name)
-    end
-    return nil
-end
-
-function ADDON.ReconcileTrackedLoot()
-    local segments = ADDON.GetCharacterDB().segments or {}
-    local changed
-
-    local function mergeDuplicateItem(target, duplicate)
-        target.blizzardRollStarted = target.blizzardRollStarted or duplicate.blizzardRollStarted
-        target.rollMethod = target.rollMethod or duplicate.rollMethod
-        target.count = math.max(tonumber(target.count or 1) or 1, tonumber(duplicate.count or 1) or 1)
-        local targetRecipient = target.recipients and target.recipients[1]
-        local duplicateRecipient = duplicate.recipients and duplicate.recipients[1]
-        if targetRecipient and duplicateRecipient
-            and (not targetRecipient.method or targetRecipient.method == "loot")
-            and duplicateRecipient.method then
-            targetRecipient.method = duplicateRecipient.method
-        end
-        for _, reward in ipairs(duplicate.disenchantRewards or {}) do
-            if type(reward) == "table" and reward.link then
-                addDisenchantReward(target, reward.link, reward.count)
+local function handleRollWinner(message, link)
+    for _, definition in ipairs(ROLL_WINNER_FORMATS) do
+        local captures = matchLocalizedFormat(message, definition.text)
+        if captures then
+            local playerName, result = getCaptureValues(captures)
+            if definition.self then
+                playerName = UnitName and UnitName("player")
             end
-        end
-    end
-
-    -- Older event sequences could save both the rolled item and a later
-    -- LOOT_OPENED placeholder. Keep the awarded record and discard only the
-    -- matching, recipient-less roll copy from the same segment.
-    for _, segment in ipairs(segments) do
-        local items = segment.items or {}
-        for i = #items, 1, -1 do
-            local unassigned = items[i]
-            if #(unassigned.recipients or {}) == 0 then
-                for j, assigned in ipairs(items) do
-                    local unassignedTime = tonumber(unassigned.timestamp)
-                    local assignedTime = tonumber(assigned.timestamp)
-                    if j ~= i
-                        and assigned.itemId == unassigned.itemId
-                        and #(assigned.recipients or {}) > 0
-                        and unassignedTime
-                        and assignedTime
-                        and math.abs(unassignedTime - assignedTime) <= PENDING_DECISION_SECONDS then
-                        mergeDuplicateItem(assigned, unassigned)
-                        table.remove(items, i)
-                        changed = true
-                        break
-                    end
-                end
-            end
-        end
-
-        for i = #items, 2, -1 do
-            local duplicate = items[i]
-            local duplicateRecipient = duplicate.recipients and duplicate.recipients[1]
-            local duplicateRecipientKey = duplicateRecipient and getRecipientKey(duplicateRecipient.name)
-            if duplicateRecipientKey then
-                for j = 1, i - 1 do
-                    local original = items[j]
-                    local originalRecipient = original.recipients and original.recipients[1]
-                    local originalTime = tonumber(original.timestamp)
-                    local duplicateTime = tonumber(duplicate.timestamp)
-                    if original.itemId == duplicate.itemId
-                        and originalRecipient
-                        and getRecipientKey(originalRecipient.name) == duplicateRecipientKey
-                        and originalTime
-                        and duplicateTime
-                        and math.abs(originalTime - duplicateTime) <= PENDING_DECISION_SECONDS then
-                        mergeDuplicateItem(original, duplicate)
-                        table.remove(items, i)
-                        changed = true
-                        break
-                    end
-                end
-            end
-        end
-    end
-
-    -- Convert already stored disenchant-material rows into tooltip rewards.
-    local pending = {}
-    for _, segment in ipairs(segments) do
-        local items = segment.items or {}
-        local i = 1
-        while i <= #items do
-            local item = items[i]
-            local disenchantRecipientKey = getDisenchantRecipientKey(item)
-            if disenchantRecipientKey then
-                table.insert(pending, {
-                    item = item,
-                    recipientKey = disenchantRecipientKey,
-                    timestamp = tonumber(item.timestamp) or 0,
-                })
-                i = i + 1
-            elseif item.link and isDisenchantMaterial(item.link) and item.recipients and item.recipients[1] then
-                local materialTime = tonumber(item.timestamp) or 0
-                local materialRecipientKey = getRecipientKey(item.recipients[1].name)
-                local pendingIndex
-                for pendingPosition, source in ipairs(pending) do
-                    local age = materialTime - source.timestamp
-                    if source.recipientKey == materialRecipientKey and age >= 0 and age <= DISENCHANT_REWARD_SECONDS then
-                        pendingIndex = pendingPosition
-                        break
-                    end
-                end
-                if not pendingIndex then
-                    for pendingPosition, source in ipairs(pending) do
-                        local age = materialTime - source.timestamp
-                        if age >= 0 and age <= DISENCHANT_REWARD_SECONDS then
-                            pendingIndex = pendingPosition
-                            break
-                        end
-                    end
-                end
-                if pendingIndex then
-                    addDisenchantReward(pending[pendingIndex].item, item.link, item.count)
-                    table.remove(pending, pendingIndex)
-                    table.remove(items, i)
-                    changed = true
+            local item = getRollItem(link, true)
+            if item and playerName then
+                local winnerRoll
+                if result and definition.method then
+                    winnerRoll = addRollResult(item, playerName, definition.method, result)
                 else
-                    i = i + 1
+                    winnerRoll = getWinnerRoll(item, playerName, definition.method)
                 end
-            else
-                i = i + 1
+                local method = definition.method or (winnerRoll and winnerRoll.method)
+                if not method then
+                    item.rollHistoryIncomplete = true
+                    method = "roll"
+                end
+                if definition.incomplete then
+                    item.rollHistoryIncomplete = true
+                end
+                if winnerRoll then
+                    winnerRoll.won = true
+                end
+                item.rollMethod = method
+                addOrUpdateRollWinner(item, playerName, method)
+                item.rollOutcomes = (tonumber(item.rollOutcomes) or 0) + 1
+                item.rollComplete = item.rollOutcomes >= (tonumber(item.rollInstances) or 1)
+                if item.rollComplete then
+                    closedRollItemsByItemId[item.itemId] = nil
+                end
+                clearCompletedRollAward(item)
             end
+            refreshWindow()
+            return true
         end
     end
-    return changed and true or false
+    return false
 end
 
-local function updateExistingLootRecipientFromTrade(message, links)
-    if not isSelfItemReceiveMessage(message) then
+local function handleAllPassed(message, link)
+    local captures = matchLocalizedFormat(message, LOOT_ROLL_ALL_PASSED)
+    if not captures then
         return false
     end
-
-    local player = UnitName and UnitName("player")
-    local changed
-    for _, link in ipairs(links or {}) do
-        local itemId = ADDON.GetItemId(link)
-        local item = itemId and (ADDON.FindRecipientCandidateByItemId(itemId) or ADDON.FindLatestItemByItemId(itemId))
-        if item then
-            item.recipients = item.recipients or {}
-            for i = #item.recipients, 1, -1 do
-                table.remove(item.recipients, i)
-            end
-            if player and player ~= "" then
-                table.insert(item.recipients, { name = player, method = "trade", timestamp = ADDON.GetNow() })
-            end
-            changed = true
+    local item = getRollItem(link, true)
+    if item then
+        item.rollOutcomes = (tonumber(item.rollOutcomes) or 0) + 1
+        item.rollComplete = item.rollOutcomes >= (tonumber(item.rollInstances) or 1)
+        item.allPassed = true
+        if item.rollComplete then
+            closedRollItemsByItemId[item.itemId] = nil
+            rollItemsAwaitingAwardByItemId[item.itemId] = nil
         end
     end
-    if changed and ADDON.RequestRefreshMainWindow then
-        ADDON.RequestRefreshMainWindow()
-    end
-    return changed
+    refreshWindow()
+    return true
 end
 
-local function handleLootMessage(message, recipientHint)
+local function handleLootMessage(message)
     local links = ADDON.ExtractItemLinks(message)
-    if #links == 0 then
+    local link = links[1]
+    if not link then
         return
     end
 
-    if recordRollSelection(message, links) then
-        return
-    end
-    if captureDisenchantRewards(message, links) then
-        return
-    end
-
-    local rollWinner = parseRollWinner(message)
-
-    local containsEmblem
-    for _, link in ipairs(links) do
-        if ADDON.IsEmblem and ADDON.IsEmblem(link) then
-            containsEmblem = true
-            break
-        end
-    end
-
-    if not isLootMessage(message) and not containsEmblem and not rollWinner then
-        updateExistingLootRecipientFromTrade(message, links)
+    if handleRollSelection(message, link)
+        or handleRollResult(message, link)
+        or handleRollWinner(message, link)
+        or handleAllPassed(message, link) then
         return
     end
 
-    local sourceName = getLootSourceName()
-
-    local recipient = rollWinner or parseLootRecipient(message) or (recipientHint ~= "" and recipientHint or nil)
-    if not recipient and isSelfLootMessage(message) then
-        recipient = UnitName and UnitName("player")
-    end
-    if not recipient and containsEmblem and string.match(message or "", "^%s*%+") then
-        recipient = UnitName and UnitName("player")
+    local recipient, count = parseAward(message)
+    if not recipient then
+        return
     end
     local segment
-    for _, link in ipairs(links) do
-        local isEmblem = ADDON.IsEmblem and ADDON.IsEmblem(link)
-        if not isEmblem or isPlayerRecipient(recipient) then
-            segment = segment or createOrReuseSegment(sourceName)
-            local itemId = ADDON.GetItemId(link)
-            local rollInfo
-            if rollWinner then
-                rollInfo = consumePendingRollItem(itemId)
-            end
-            if isPlayerRecipient(recipient) then
-                local pendingDecision = consumePendingLootDecision(itemId)
-                if pendingDecision then
-                    rollInfo = pendingDecision
-                end
-            end
-            local selectedMethod = getRollSelection(itemId, recipient)
-            if selectedMethod then
-                rollInfo = rollInfo or {}
-                rollInfo.method = selectedMethod
-            end
-            local item = addItemToSegment(segment, link, recipient, rollInfo, getLootCount(message, link))
-            if item and rollInfo and rollInfo.method == "disenchant" then
-                rememberPendingDisenchantLoot(item, recipient)
-            end
+    for _, awardLink in ipairs(links) do
+        -- CHAT_MSG_LOOT confirms item and recipient, but does not distinguish
+        -- direct looting from a master-loot assignment on every client.
+        if not confirmRollAward(awardLink, recipient, count) then
+            segment = segment or createStorageBatch("loot")
+            addAward(segment, awardLink, recipient, "loot", count)
         end
     end
-
-    if segment and ADDON.RequestRefreshMainWindow then
-        ADDON.RequestRefreshMainWindow()
-    end
+    refreshWindow()
 end
 
-function ADDON.SetPendingLootDecision(item, method)
-    if not item or not item.itemId or not method then
+local function handleRollStarted(rollId)
+    local link = rollId and GetLootRollItemLink and GetLootRollItemLink(rollId)
+    local itemId = ADDON.GetItemId(link)
+    if not rollId or not link or not itemId then
         return
     end
-    item.rollMethod = method
-    pendingLootDecisions[item.itemId] = {
-        itemDbId = item.id,
-        method = method,
-        timestamp = ADDON.GetNow(),
-    }
-    local player = UnitName and UnitName("player")
-    local playerKey = getRecipientKey(player)
-    if playerKey then
-        pendingRollSelections[item.itemId] = pendingRollSelections[item.itemId] or {
-            recipients = {},
-            timestamp = ADDON.GetNow(),
-        }
-        pendingRollSelections[item.itemId].recipients[playerKey] = method
-        pendingRollSelections[item.itemId].timestamp = ADDON.GetNow()
+
+    if activeRollCount == 0 then
+        activeRollItemsByItemId = {}
+        activeRollCountsByItemId = {}
     end
+    closedRollItemsByItemId[itemId] = nil
+    local item = activeRollItemsByItemId[itemId]
+    if not item then
+        item = ADDON.AddItemToSegment(createStorageBatch("roll"), link, 1)
+        if not item then
+            return
+        end
+        item.blizzardRollStarted = true
+        item.rollInstances = 1
+        activeRollItemsByItemId[itemId] = item
+        activeRollCountsByItemId[itemId] = 0
+        rollItemsAwaitingAwardByItemId[itemId] = item
+    else
+        item.rollInstances = (tonumber(item.rollInstances) or 1) + 1
+        item.count = item.rollInstances
+    end
+
+    activeRollsById[rollId] = item
+    activeRollCountsByItemId[itemId] = (activeRollCountsByItemId[itemId] or 0) + 1
+    activeRollCount = activeRollCount + 1
+    refreshWindow()
 end
 
-local function handleLootOpened()
-    local sourceName = getLootSourceName()
+local function handleRollCancelled(rollId)
+    local item = rollId and activeRollsById[rollId]
+    if not item then
+        return
+    end
 
-    if GetNumLootItems and GetLootSlotLink then
-        local segment
-        for slot = 1, GetNumLootItems() do
-            local link = GetLootSlotLink(slot)
-            if link then
-                segment = segment or createOrReuseSegment(sourceName)
-                if not (ADDON.IsEmblem and ADDON.IsEmblem(link)) then
-                    local texture, itemName, quantity = GetLootSlotInfo and GetLootSlotInfo(slot)
-                    addItemToSegment(segment, link, nil, nil, quantity)
-                end
-            end
-        end
-        if segment then
-            if ADDON.RequestRefreshMainWindow then
-                ADDON.RequestRefreshMainWindow()
-            end
+    activeRollsById[rollId] = nil
+    local itemId = item.itemId
+    activeRollCountsByItemId[itemId] = math.max(0, (activeRollCountsByItemId[itemId] or 1) - 1)
+    activeRollCount = math.max(0, activeRollCount - 1)
+    if activeRollCountsByItemId[itemId] == 0 then
+        activeRollCountsByItemId[itemId] = nil
+        activeRollItemsByItemId[itemId] = nil
+        if not item.rollComplete then
+            item.rollClosed = true
+            closedRollItemsByItemId[itemId] = item
         end
     end
+    if activeRollCount == 0 then
+        activeRollItemsByItemId = {}
+        activeRollCountsByItemId = {}
+    end
+    refreshWindow()
 end
 
-function ADDON.TrackRollLootItem(link)
-    if not link then
-        return nil
+local function recordPlayerRoll(rollId, rollType)
+    local item = rollId and activeRollsById[rollId]
+    local method = rollType == 1 and "need"
+        or rollType == 2 and "greed"
+        or rollType == 3 and "disenchant"
+    if item and method then
+        addRollSelection(item, UnitName and UnitName("player"), method, rollId)
+        refreshWindow()
     end
-
-    local itemId = ADDON.GetItemId(link)
-    local item, segment = ADDON.FindRollCandidateByItemId(itemId)
-    if item then
-        item.blizzardRollStarted = true
-        rememberPendingRollItem(item)
-        return item, segment
-    end
-
-    local sourceName = getLootSourceName()
-    segment = createOrReuseSegment(sourceName)
-    item = addItemToSegment(segment, link)
-    if item then
-        item.blizzardRollStarted = true
-        rememberPendingRollItem(item)
-    end
-    return item, segment
 end
 
 function ADDON.InitializeTracker()
@@ -937,11 +579,24 @@ function ADDON.InitializeTracker()
         end)
         registeredLootChatFilter = true
     end
-    DudesUtils.EventHandler.Add("CHAT_MSG_LOOT", function(_, message, recipient)
-        handleLootMessage(message, recipient)
+    if hooksecurefunc and RollOnLoot and not registeredRollHook then
+        hooksecurefunc("RollOnLoot", recordPlayerRoll)
+        registeredRollHook = true
+    end
+
+    DudesUtils.EventHandler.Add("CHAT_MSG_LOOT", function(_, message)
+        handleLootMessage(message)
     end)
-    DudesUtils.EventHandler.Add("LOOT_OPENED", function()
-        handleLootOpened()
+    DudesUtils.EventHandler.Add("START_LOOT_ROLL", function(_, rollId)
+        if DudesUtils.OnNextUpdate then
+            DudesUtils.OnNextUpdate(function()
+                handleRollStarted(rollId)
+            end)
+        else
+            handleRollStarted(rollId)
+        end
     end)
-    DudesUtils.EventHandler.Add("COMBAT_LOG_EVENT_UNFILTERED", captureDeadUnit)
+    DudesUtils.EventHandler.Add("CANCEL_LOOT_ROLL", function(_, rollId)
+        handleRollCancelled(rollId)
+    end)
 end

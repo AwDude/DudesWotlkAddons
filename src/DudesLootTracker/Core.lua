@@ -4,7 +4,6 @@ local ADDON = DudesLootTracker
 local DEFAULT_SETTINGS = {
     showMinimapButton = true,
     minimapAngle = 260,
-    autoGreedDisenchantUncommon = false,
     hideLootChatMessages = false,
     maxLootEntries = 900,
     window = {
@@ -264,12 +263,6 @@ function ADDON.Initialize()
     end
     if ADDON.InitializeTracker then
         ADDON.InitializeTracker()
-    end
-    if ADDON.ReconcileTrackedLoot then
-        ADDON.ReconcileTrackedLoot()
-    end
-    if ADDON.InitializeAutoRoll then
-        ADDON.InitializeAutoRoll()
     end
     if ADDON.PruneHistory then
         ADDON.PruneHistory()

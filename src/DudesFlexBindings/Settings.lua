@@ -1,6 +1,9 @@
 ﻿local ADDON = DudesFlexBindings
 
 local optionsPanel
+local macroPlaceholderPanel
+local layoutsPanel
+local bonusBarPanel
 local minimapButton
 local layoutRows = {}
 local layoutMenu
@@ -40,10 +43,7 @@ local function clamp(value, minValue, maxValue)
 end
 
 local function createText(parent, size)
-    local text = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    text:SetFont(STANDARD_TEXT_FONT, size or 11)
-    text:SetJustifyH("LEFT")
-    return text
+    return DudesUtils.SettingsUI.CreateText(parent, size or "normal")
 end
 
 local function setBackdrop(frame, r, g, b, a)
@@ -95,7 +95,7 @@ local function styleButton(button)
     setBackdrop(button, 0.055, 0.065, 0.08, 1)
     addBorderHover(button)
     if button:GetFontString() then
-        button:GetFontString():SetTextColor(0.86, 0.92, 1)
+        DudesUtils.SettingsUI.StyleButtonText(button)
     end
 end
 
@@ -165,11 +165,11 @@ local function updateMinimapButtonFromCursor()
 end
 
 local function layoutSettingsRows()
-    if not optionsPanel or not optionsPanel.layoutRows then
+    if not layoutsPanel or not optionsPanel or not optionsPanel.layoutRows then
         return
     end
 
-    local panelWidth = optionsPanel:GetWidth() or 520
+    local panelWidth = layoutsPanel:GetWidth() or 520
     local rowWidth = clamp(panelWidth - 48, 260, 520)
     local loadWidth = 64
     local menuWidth = 34
@@ -193,11 +193,11 @@ local function layoutSettingsRows()
 end
 
 local function layoutMacroPlaceholderRows()
-    if not optionsPanel or not optionsPanel.macroPlaceholderRows then
+    if not macroPlaceholderPanel or not optionsPanel or not optionsPanel.macroPlaceholderRows then
         return
     end
 
-    local panelWidth = optionsPanel:GetWidth() or 520
+    local panelWidth = macroPlaceholderPanel:GetWidth() or 520
     local rowWidth = clamp(panelWidth - 48, 260, 520)
     local editWidth = 76
     local deleteWidth = 76
@@ -217,21 +217,17 @@ local function layoutMacroPlaceholderRows()
     end
 end
 
-local function layoutOptionsPanel()
-    if not optionsPanel or not optionsPanel.scrollFrame or not optionsPanel.content then
+local function layoutOptionsPanels()
+    if not optionsPanel then
         return
     end
 
-    local width = optionsPanel:GetWidth() or 620
-    local height = optionsPanel:GetHeight() or 560
-    local extraLayoutRows = math.max(0, (optionsPanel.layoutProfileCount or 0) - 8)
     local macroPlaceholderRows = optionsPanel.macroPlaceholderCount or 0
-    local contentHeight = math.max(1090, height + 530) + extraLayoutRows * 38 + macroPlaceholderRows * 38
-    optionsPanel.scrollFrame:ClearAllPoints()
-    optionsPanel.scrollFrame:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 0, -4)
-    optionsPanel.scrollFrame:SetPoint("BOTTOMRIGHT", optionsPanel, "BOTTOMRIGHT", -28, 4)
-    optionsPanel.content:SetWidth(math.max(520, width - 34))
-    optionsPanel.content:SetHeight(contentHeight)
+    local layoutProfileRows = math.max(1, optionsPanel.layoutProfileCount or 0)
+    DudesUtils.SettingsUI.LayoutScrollablePanel(optionsPanel, 260)
+    DudesUtils.SettingsUI.LayoutScrollablePanel(macroPlaceholderPanel, 150 + macroPlaceholderRows * 38)
+    DudesUtils.SettingsUI.LayoutScrollablePanel(layoutsPanel, 116 + layoutProfileRows * 38)
+    DudesUtils.SettingsUI.LayoutScrollablePanel(bonusBarPanel, 420)
     layoutSettingsRows()
     layoutMacroPlaceholderRows()
 end
@@ -261,7 +257,6 @@ local function refreshLayoutRows()
     end
     layoutSettingsRows()
 
-    local lastVisibleRow
     for i, row in ipairs(optionsPanel.layoutRows) do
         local profile = profiles[i]
         row.profileId = profile and profile.id or nil
@@ -274,20 +269,11 @@ local function refreshLayoutRows()
                 row.menu:Show()
             end
             row:Show()
-            lastVisibleRow = row
         else
             row:Hide()
         end
     end
-    if optionsPanel.bonusTitle then
-        optionsPanel.bonusTitle:ClearAllPoints()
-        if lastVisibleRow then
-            optionsPanel.bonusTitle:SetPoint("TOPLEFT", lastVisibleRow, "BOTTOMLEFT", 0, -18)
-        elseif optionsPanel.saveLayoutButton then
-            optionsPanel.bonusTitle:SetPoint("TOPLEFT", optionsPanel.saveLayoutButton, "BOTTOMLEFT", 0, -18)
-        end
-    end
-    layoutOptionsPanel()
+    layoutOptionsPanels()
 end
 
 local function setFrameEnabled(frame, enabled)
@@ -383,12 +369,9 @@ end
 local function createCheckbox(parent, anchor, yOffset, label, getter, setter, afterClick)
     local checkbox = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
     checkbox:SetWidth(22)
-    checkbox:SetHeight(22)
+    checkbox:SetHeight(24)
     checkbox:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, yOffset)
-    styleButton(checkbox)
-    checkbox.text = checkbox:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    checkbox.text:SetPoint("LEFT", checkbox, "RIGHT", 2, 1)
-    checkbox.text:SetText(label)
+    DudesUtils.SettingsUI.CreateCheckboxLabel(checkbox, parent, label)
     checkbox:SetScript("OnClick", function(self)
         if setter(self:GetChecked() and true or false) == false then
             checkbox.refresh()
@@ -565,8 +548,9 @@ local function createBonusAnchorSelector(parent, anchor, yOffset)
     selector.valueText = createText(selector, 11)
     selector.valueText:SetAllPoints(selector)
     selector.valueText:SetJustifyH("CENTER")
-    selector.text = selector:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    selector.text = DudesUtils.SettingsUI.CreateText(parent, "normal")
     selector.text:SetPoint("LEFT", selector, "RIGHT", 8, 1)
+    selector.text:SetPoint("RIGHT", parent, "RIGHT", -16, 0)
     selector.text:SetText("Bonusleisten Anker")
     selector:SetScript("OnClick", function(self)
         showBonusAnchorSelector(self)
@@ -587,8 +571,9 @@ local function createBonusGrowthSelector(parent, anchor, yOffset)
     selector.valueText = createText(selector, 11)
     selector.valueText:SetAllPoints(selector)
     selector.valueText:SetJustifyH("CENTER")
-    selector.text = selector:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    selector.text = DudesUtils.SettingsUI.CreateText(parent, "normal")
     selector.text:SetPoint("LEFT", selector, "RIGHT", 8, 1)
+    selector.text:SetPoint("RIGHT", parent, "RIGHT", -16, 0)
     selector.text:SetText("Bonusleisten Wachstum")
     selector:SetScript("OnClick", function(self)
         showBonusGrowthSelector(self)
@@ -607,6 +592,7 @@ local function createBindingSizeControl(parent, anchor, yOffset)
     control:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, yOffset)
     control.text = createText(parent, 11)
     control.text:SetPoint("LEFT", control, "RIGHT", 8, 1)
+    control.text:SetPoint("RIGHT", parent, "RIGHT", -16, 0)
     control.text:SetText("Textgröße")
     control.value = createText(control, 11)
     control.value:SetPoint("CENTER", control, "CENTER", 0, 1)
@@ -805,6 +791,8 @@ local function createDialogFrame(name, titleText, width, height)
     dialog.close:SetPoint("TOPRIGHT", dialog, "TOPRIGHT", -8, -8)
     dialog.close:SetText("X")
     styleButton(dialog.close)
+    dialog.title:SetPoint("RIGHT", dialog.close, "LEFT", -8, 0)
+    dialog.title:SetHeight(24)
     dialog.close:SetScript("OnClick", function()
         dialog:Hide()
     end)
@@ -830,7 +818,8 @@ local function createDialogEditBox(parent, width, height, multiLine)
     editBox:SetWidth(width)
     editBox:SetHeight(height)
     editBox:SetAutoFocus(false)
-    editBox:SetFontObject(ChatFontNormal)
+    editBox:SetFont(STANDARD_TEXT_FONT, 11, "")
+    editBox:SetTextColor(1, 1, 1)
     editBox:SetTextInsets(6, 6, 0, 0)
     if multiLine then
         editBox:SetMultiLine(true)
@@ -859,7 +848,8 @@ local function createDialogScrollTextBox(parent, name, width, height, editable)
     editBox:SetWidth(width - 34)
     editBox:SetHeight(height - 12)
     editBox:SetAutoFocus(false)
-    editBox:SetFontObject(ChatFontNormal)
+    editBox:SetFont(STANDARD_TEXT_FONT, 11, "")
+    editBox:SetTextColor(1, 1, 1)
     editBox:SetTextInsets(0, 0, 0, 0)
     editBox:SetMultiLine(true)
     editBox:SetScript("OnEscapePressed", function(self)
@@ -915,7 +905,6 @@ local function refreshMacroPlaceholderRows()
         optionsPanel.createMacroPlaceholderRow(#optionsPanel.macroPlaceholderRows + 1)
     end
 
-    local lastVisibleRow
     for i, row in ipairs(optionsPanel.macroPlaceholderRows) do
         local placeholder = placeholders[i]
         if placeholder then
@@ -924,7 +913,6 @@ local function refreshMacroPlaceholderRows()
             row.key:SetText(placeholder.key)
             row.value:SetText(summarizeMacroPlaceholderText(placeholder.text))
             row:Show()
-            lastVisibleRow = row
         else
             row.placeholderKey = nil
             row.placeholderText = nil
@@ -966,16 +954,8 @@ local function refreshMacroPlaceholderRows()
             optionsPanel.macroPlaceholderWarning:Hide()
         end
     end
-    if optionsPanel.layoutTitle then
-        optionsPanel.layoutTitle:ClearAllPoints()
-        if lastVisibleRow then
-            optionsPanel.layoutTitle:SetPoint("TOPLEFT", lastVisibleRow, "BOTTOMLEFT", 0, -18)
-        else
-            optionsPanel.layoutTitle:SetPoint("TOPLEFT", optionsPanel.addMacroPlaceholderButton, "BOTTOMLEFT", -2, -24)
-        end
-    end
     layoutMacroPlaceholderRows()
-    layoutOptionsPanel()
+    layoutOptionsPanels()
 end
 
 local function saveMacroPlaceholderFromDialog()
@@ -1034,7 +1014,7 @@ local function showMacroPlaceholderDialog(placeholderKey, placeholderText)
         macroPlaceholderDialog.errorText = createText(macroPlaceholderDialog, 10)
         macroPlaceholderDialog.errorText:SetPoint("TOPLEFT", macroPlaceholderDialog.macroTextBox, "BOTTOMLEFT", 0, -8)
         macroPlaceholderDialog.errorText:SetPoint("RIGHT", macroPlaceholderDialog, "RIGHT", -16, 0)
-        macroPlaceholderDialog.errorText:SetTextColor(1, 0.25, 0.18)
+        macroPlaceholderDialog.errorText:SetTextColor(1, 1, 1)
         macroPlaceholderDialog.errorText:Hide()
 
         macroPlaceholderDialog.saveButton = CreateFrame("Button", nil, macroPlaceholderDialog, "UIPanelButtonTemplate")
@@ -1138,7 +1118,7 @@ local function showImportLayoutDialog()
         importLayoutDialog.errorText = createText(importLayoutDialog, 10)
         importLayoutDialog.errorText:SetPoint("TOPLEFT", importLayoutDialog.importTextBox, "BOTTOMLEFT", 0, -8)
         importLayoutDialog.errorText:SetPoint("RIGHT", importLayoutDialog, "RIGHT", -16, 0)
-        importLayoutDialog.errorText:SetTextColor(1, 0.25, 0.18)
+        importLayoutDialog.errorText:SetTextColor(1, 1, 1)
         importLayoutDialog.errorText:Hide()
 
         importLayoutDialog.importButton = CreateFrame("Button", nil, importLayoutDialog, "UIPanelButtonTemplate")
@@ -1291,41 +1271,25 @@ local function createOptionsPanel()
         return optionsPanel
     end
 
-    optionsPanel = CreateFrame("Frame", "DudesFlexBindingsOptionsPanel", UIParent)
-    optionsPanel.name = "DudesFlexBindings"
-
-    optionsPanel.scrollFrame = CreateFrame("ScrollFrame", "DudesFlexBindingsOptionsScrollFrame", optionsPanel, "UIPanelScrollFrameTemplate")
-    optionsPanel.content = CreateFrame("Frame", "DudesFlexBindingsOptionsContent", optionsPanel.scrollFrame)
-    optionsPanel.scrollFrame:SetScrollChild(optionsPanel.content)
-    optionsPanel.scrollFrame:EnableMouseWheel(true)
-    optionsPanel.scrollFrame:SetScript("OnMouseWheel", function(self, delta)
-        local scrollBar = _G[self:GetName() .. "ScrollBar"]
-        if scrollBar then
-            local value = scrollBar:GetValue() or 0
-            local minValue, maxValue = scrollBar:GetMinMaxValues()
-            scrollBar:SetValue(clamp(value - delta * 32, minValue or 0, maxValue or 0))
-        end
-    end)
+    optionsPanel = DudesUtils.SettingsUI.CreateScrollablePanel(
+        "DudesFlexBindingsOptionsPanel",
+        "DudesFlexBindings",
+        "DudesFlexBindingsOptionsScrollFrame",
+        "DudesFlexBindingsOptionsContent"
+    )
 
     local content = optionsPanel.content
 
     local title = createText(content, 18)
     title:SetPoint("TOPLEFT", content, "TOPLEFT", 16, -16)
+    DudesUtils.SettingsUI.AnchorTextToContent(title, content)
     title:SetText("Dude's Flexible Bindings")
-
-    local subtitle = createText(content, 11)
-    subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
-    subtitle:SetText("Einheitliche Interface, Makro und Bonusleisten Belegungen")
-    subtitle:SetTextColor(0.8, 0.8, 0.8)
 
     optionsPanel.minimapCheckbox = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
     optionsPanel.minimapCheckbox:SetWidth(22)
-    optionsPanel.minimapCheckbox:SetHeight(22)
-    optionsPanel.minimapCheckbox:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", -2, -18)
-    styleButton(optionsPanel.minimapCheckbox)
-    optionsPanel.minimapCheckbox.text = optionsPanel.minimapCheckbox:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    optionsPanel.minimapCheckbox.text:SetPoint("LEFT", optionsPanel.minimapCheckbox, "RIGHT", 2, 1)
-    optionsPanel.minimapCheckbox.text:SetText("Minimap Button anzeigen")
+    optionsPanel.minimapCheckbox:SetHeight(24)
+    optionsPanel.minimapCheckbox:SetPoint("TOPLEFT", title, "BOTTOMLEFT", -2, -18)
+    DudesUtils.SettingsUI.CreateCheckboxLabel(optionsPanel.minimapCheckbox, content, "Minimap Button anzeigen")
     optionsPanel.minimapCheckbox:SetScript("OnClick", function(self)
         ADDON.SetSyncedSetting("showMinimapButton", self:GetChecked() and true or false)
         refreshMinimapButton()
@@ -1373,17 +1337,28 @@ local function createOptionsPanel()
         end
     end)
 
-    local macroPlaceholderTitle = createText(content, 15)
-    macroPlaceholderTitle:SetPoint("TOPLEFT", openLayoutButton, "BOTTOMLEFT", -2, -24)
+    macroPlaceholderPanel = DudesUtils.SettingsUI.CreateScrollablePanel(
+        "DudesFlexBindingsMacroPlaceholderPanel",
+        "Makro-Platzhalter",
+        "DudesFlexBindingsMacroPlaceholderScrollFrame",
+        "DudesFlexBindingsMacroPlaceholderContent"
+    )
+    macroPlaceholderPanel.parent = optionsPanel.name
+    local macroContent = macroPlaceholderPanel.content
+
+    local macroPlaceholderTitle = createText(macroContent, 18)
+    macroPlaceholderTitle:SetPoint("TOPLEFT", macroContent, "TOPLEFT", 16, -16)
+    DudesUtils.SettingsUI.AnchorTextToContent(macroPlaceholderTitle, macroContent)
     macroPlaceholderTitle:SetText("Makro-Platzhalter")
     optionsPanel.macroPlaceholderTitle = macroPlaceholderTitle
 
-    local macroPlaceholderDescription = createText(content, 10)
+    local macroPlaceholderDescription = createText(macroContent, 10)
     macroPlaceholderDescription:SetPoint("TOPLEFT", macroPlaceholderTitle, "BOTTOMLEFT", 0, -6)
+    DudesUtils.SettingsUI.AnchorTextToContent(macroPlaceholderDescription, macroContent)
+    macroPlaceholderDescription:SetHeight(28)
     macroPlaceholderDescription:SetText("Spec-spezifisch; Schlüssel werden ohne Beachtung der Groß-/Kleinschreibung ersetzt.")
-    macroPlaceholderDescription:SetTextColor(0.72, 0.72, 0.72)
 
-    local addMacroPlaceholderButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    local addMacroPlaceholderButton = CreateFrame("Button", nil, macroContent, "UIPanelButtonTemplate")
     addMacroPlaceholderButton:SetWidth(120)
     addMacroPlaceholderButton:SetHeight(24)
     addMacroPlaceholderButton:SetPoint("TOPLEFT", macroPlaceholderDescription, "BOTTOMLEFT", 0, -8)
@@ -1394,27 +1369,25 @@ local function createOptionsPanel()
     end)
     optionsPanel.addMacroPlaceholderButton = addMacroPlaceholderButton
 
-    local macroPlaceholderWarning = createText(content, 10)
+    local macroPlaceholderWarning = createText(macroContent, 10)
     macroPlaceholderWarning:SetPoint("LEFT", addMacroPlaceholderButton, "RIGHT", 10, 0)
-    macroPlaceholderWarning:SetWidth(360)
-    macroPlaceholderWarning:SetTextColor(1, 0.55, 0.2)
+    macroPlaceholderWarning:SetPoint("RIGHT", macroContent, "RIGHT", -16, 0)
+    macroPlaceholderWarning:SetHeight(24)
     macroPlaceholderWarning:Hide()
     optionsPanel.macroPlaceholderWarning = macroPlaceholderWarning
 
     optionsPanel.macroPlaceholderRows = {}
     optionsPanel.createMacroPlaceholderRow = function(i)
-        local row = CreateFrame("Frame", nil, content)
+        local row = CreateFrame("Frame", nil, macroContent)
         row:SetWidth(260)
         row:SetHeight(34)
         row:SetPoint("TOPLEFT", addMacroPlaceholderButton, "BOTTOMLEFT", 0, -8 - (i - 1) * 38)
 
         row.key = createText(row, 11)
         row.key:SetPoint("TOPLEFT", row, "TOPLEFT", 0, -1)
-        row.key:SetTextColor(0.4, 0.8, 1)
 
-        row.value = createText(row, 9)
+        row.value = createText(row, 10)
         row.value:SetPoint("TOPLEFT", row.key, "BOTTOMLEFT", 0, -2)
-        row.value:SetTextColor(0.72, 0.72, 0.72)
 
         row.edit = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
         row.edit:SetHeight(22)
@@ -1436,12 +1409,22 @@ local function createOptionsPanel()
         optionsPanel.macroPlaceholderRows[i] = row
     end
 
-    local layoutTitle = createText(content, 15)
-    layoutTitle:SetPoint("TOPLEFT", addMacroPlaceholderButton, "BOTTOMLEFT", -2, -24)
+    layoutsPanel = DudesUtils.SettingsUI.CreateScrollablePanel(
+        "DudesFlexBindingsLayoutsPanel",
+        "Layouts",
+        "DudesFlexBindingsLayoutsScrollFrame",
+        "DudesFlexBindingsLayoutsContent"
+    )
+    layoutsPanel.parent = optionsPanel.name
+    local layoutsContent = layoutsPanel.content
+
+    local layoutTitle = createText(layoutsContent, 18)
+    layoutTitle:SetPoint("TOPLEFT", layoutsContent, "TOPLEFT", 16, -16)
+    DudesUtils.SettingsUI.AnchorTextToContent(layoutTitle, layoutsContent)
     layoutTitle:SetText("Layouts")
     optionsPanel.layoutTitle = layoutTitle
 
-    local saveLayoutButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    local saveLayoutButton = CreateFrame("Button", nil, layoutsContent, "UIPanelButtonTemplate")
     saveLayoutButton:SetWidth(120)
     saveLayoutButton:SetHeight(24)
     saveLayoutButton:SetPoint("TOPLEFT", layoutTitle, "BOTTOMLEFT", 0, -10)
@@ -1450,7 +1433,7 @@ local function createOptionsPanel()
     saveLayoutButton:SetScript("OnClick", showSaveLayoutDialog)
     optionsPanel.saveLayoutButton = saveLayoutButton
 
-    local importLayoutButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    local importLayoutButton = CreateFrame("Button", nil, layoutsContent, "UIPanelButtonTemplate")
     importLayoutButton:SetWidth(120)
     importLayoutButton:SetHeight(24)
     importLayoutButton:SetPoint("LEFT", saveLayoutButton, "RIGHT", 8, 0)
@@ -1461,7 +1444,7 @@ local function createOptionsPanel()
 
     optionsPanel.layoutRows = layoutRows
     optionsPanel.createLayoutRow = function(i)
-        local row = CreateFrame("Frame", nil, content)
+        local row = CreateFrame("Frame", nil, layoutsContent)
         row:SetWidth(260)
         row:SetHeight(34)
         row:SetPoint("TOPLEFT", saveLayoutButton, "BOTTOMLEFT", 0, -8 - (i - 1) * 38)
@@ -1470,10 +1453,9 @@ local function createOptionsPanel()
         row.name:SetPoint("TOPLEFT", row, "TOPLEFT", 0, -1)
         row.name:SetWidth(130)
 
-        row.meta = createText(row, 9)
+        row.meta = createText(row, 10)
         row.meta:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -2)
         row.meta:SetWidth(130)
-        row.meta:SetTextColor(0.72, 0.72, 0.72)
 
         row.load = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
         row.load:SetWidth(58)
@@ -1507,12 +1489,22 @@ local function createOptionsPanel()
         optionsPanel.createLayoutRow(i)
     end
 
-    local bonusTitle = createText(content, 15)
-    bonusTitle:SetPoint("TOPLEFT", layoutRows[8], "BOTTOMLEFT", 0, -18)
+    bonusBarPanel = DudesUtils.SettingsUI.CreateScrollablePanel(
+        "DudesFlexBindingsBonusBarPanel",
+        "Bonusleiste",
+        "DudesFlexBindingsBonusBarScrollFrame",
+        "DudesFlexBindingsBonusBarContent"
+    )
+    bonusBarPanel.parent = optionsPanel.name
+    local bonusContent = bonusBarPanel.content
+
+    local bonusTitle = createText(bonusContent, 18)
+    bonusTitle:SetPoint("TOPLEFT", bonusContent, "TOPLEFT", 16, -16)
+    DudesUtils.SettingsUI.AnchorTextToContent(bonusTitle, bonusContent)
     bonusTitle:SetText("Bonusleiste")
     optionsPanel.bonusTitle = bonusTitle
 
-    optionsPanel.bonusBarCheckbox = createCheckbox(content, bonusTitle, -8, "Bonusleiste anzeigen", function()
+    optionsPanel.bonusBarCheckbox = createCheckbox(bonusContent, bonusTitle, -8, "Bonusleiste anzeigen", function()
         return ADDON.GetBonusBarSettings().showBonusBar
     end, function(value)
         ADDON.GetBonusBarSettings().showBonusBar = value
@@ -1521,7 +1513,7 @@ local function createOptionsPanel()
         end
     end)
 
-    optionsPanel.alignBonusBarCheckbox = createCheckbox(content, optionsPanel.bonusBarCheckbox, -2, "Bonusleiste ausrichten", function()
+    optionsPanel.alignBonusBarCheckbox = createCheckbox(bonusContent, optionsPanel.bonusBarCheckbox, -2, "Bonusleiste ausrichten", function()
         return ADDON.GetBonusBarSettings().alignBonusBar
     end, function(value)
         ADDON.GetBonusBarSettings().alignBonusBar = value
@@ -1530,11 +1522,11 @@ local function createOptionsPanel()
         end
     end)
 
-    optionsPanel.bonusBarAnchorSelector = createBonusAnchorSelector(content, optionsPanel.alignBonusBarCheckbox, -2)
+    optionsPanel.bonusBarAnchorSelector = createBonusAnchorSelector(bonusContent, optionsPanel.alignBonusBarCheckbox, -2)
 
-    optionsPanel.bonusBarGrowthSelector = createBonusGrowthSelector(content, optionsPanel.bonusBarAnchorSelector, -2)
+    optionsPanel.bonusBarGrowthSelector = createBonusGrowthSelector(bonusContent, optionsPanel.bonusBarAnchorSelector, -2)
 
-    optionsPanel.showBonusBarBindingsCheckbox = createCheckbox(content, optionsPanel.bonusBarGrowthSelector, -2, "Bonusleisten Belegungen anzeigen", function()
+    optionsPanel.showBonusBarBindingsCheckbox = createCheckbox(bonusContent, optionsPanel.bonusBarGrowthSelector, -2, "Bonusleisten Belegungen anzeigen", function()
         return ADDON.GetBonusBarSettings().showBonusBarBindings
     end, function(value)
         ADDON.GetBonusBarSettings().showBonusBarBindings = value
@@ -1543,9 +1535,9 @@ local function createOptionsPanel()
         end
     end)
 
-    optionsPanel.bonusBarBindingSizeControl = createBindingSizeControl(content, optionsPanel.showBonusBarBindingsCheckbox, -2)
+    optionsPanel.bonusBarBindingSizeControl = createBindingSizeControl(bonusContent, optionsPanel.showBonusBarBindingsCheckbox, -2)
 
-    optionsPanel.showBonusBarTooltipsCheckbox = createCheckbox(content, optionsPanel.bonusBarBindingSizeControl, -2, "Bonusleisten Tooltips anzeigen", function()
+    optionsPanel.showBonusBarTooltipsCheckbox = createCheckbox(bonusContent, optionsPanel.bonusBarBindingSizeControl, -2, "Bonusleisten Tooltips anzeigen", function()
         return ADDON.GetBonusBarSettings().showBonusBarTooltips
     end, function(value)
         ADDON.GetBonusBarSettings().showBonusBarTooltips = value
@@ -1554,7 +1546,7 @@ local function createOptionsPanel()
         end
     end)
 
-    optionsPanel.clickBonusBarButtonsCheckbox = createCheckbox(content, optionsPanel.showBonusBarTooltipsCheckbox, -2, "Bonusleisten Buttons klickbar", function()
+    optionsPanel.clickBonusBarButtonsCheckbox = createCheckbox(bonusContent, optionsPanel.showBonusBarTooltipsCheckbox, -2, "Bonusleisten Buttons klickbar", function()
         return ADDON.GetBonusBarSettings().clickBonusBarButtons
     end, function(value)
         ADDON.GetBonusBarSettings().clickBonusBarButtons = value
@@ -1563,7 +1555,7 @@ local function createOptionsPanel()
         end
     end)
 
-    optionsPanel.resetBonusBarPositionButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    optionsPanel.resetBonusBarPositionButton = CreateFrame("Button", nil, bonusContent, "UIPanelButtonTemplate")
     optionsPanel.resetBonusBarPositionButton:SetWidth(178)
     optionsPanel.resetBonusBarPositionButton:SetHeight(24)
     optionsPanel.resetBonusBarPositionButton:SetPoint("TOPLEFT", optionsPanel.clickBonusBarButtonsCheckbox, "BOTTOMLEFT", 2, -8)
@@ -1579,14 +1571,24 @@ local function createOptionsPanel()
         end
     end)
 
-    optionsPanel:SetScript("OnShow", function()
-        layoutOptionsPanel()
+    local function onPanelShow()
+        layoutOptionsPanels()
         ADDON.RefreshSettings()
-    end)
-    optionsPanel:SetScript("OnSizeChanged", layoutOptionsPanel)
-    layoutOptionsPanel()
+    end
+    optionsPanel:SetScript("OnShow", onPanelShow)
+    macroPlaceholderPanel:SetScript("OnShow", onPanelShow)
+    layoutsPanel:SetScript("OnShow", onPanelShow)
+    bonusBarPanel:SetScript("OnShow", onPanelShow)
+    optionsPanel:SetScript("OnSizeChanged", layoutOptionsPanels)
+    macroPlaceholderPanel:SetScript("OnSizeChanged", layoutOptionsPanels)
+    layoutsPanel:SetScript("OnSizeChanged", layoutOptionsPanels)
+    bonusBarPanel:SetScript("OnSizeChanged", layoutOptionsPanels)
+    layoutOptionsPanels()
 
     InterfaceOptions_AddCategory(optionsPanel)
+    InterfaceOptions_AddCategory(macroPlaceholderPanel)
+    InterfaceOptions_AddCategory(layoutsPanel)
+    InterfaceOptions_AddCategory(bonusBarPanel)
 
     return optionsPanel
 end

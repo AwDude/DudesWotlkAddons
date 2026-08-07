@@ -49,15 +49,12 @@ local function styleButton(button)
     setBackdrop(button, 0.09, 0.105, 0.13, 1)
     addBorderHover(button)
     if button:GetFontString() then
-        button:GetFontString():SetTextColor(0.86, 0.92, 1)
+        DudesUtils.SettingsUI.StyleButtonText(button)
     end
 end
 
 local function createText(parent, size)
-    local text = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    text:SetFont(STANDARD_TEXT_FONT, size or 11)
-    text:SetJustifyH("LEFT")
-    return text
+    return DudesUtils.SettingsUI.CreateText(parent, size or "normal")
 end
 
 local function getAngleFromDelta(y, x)
@@ -114,11 +111,9 @@ end
 local function createCheckbox(parent, anchor, yOffset, label, getter, setter)
     local checkbox = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
     checkbox:SetWidth(22)
-    checkbox:SetHeight(22)
+    checkbox:SetHeight(24)
     checkbox:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, yOffset or -8)
-    checkbox.text = checkbox:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    checkbox.text:SetPoint("LEFT", checkbox, "RIGHT", 2, 1)
-    checkbox.text:SetText(label)
+    DudesUtils.SettingsUI.CreateCheckboxLabel(checkbox, parent, label)
     checkbox:SetScript("OnClick", function(self)
         setter(self:GetChecked() and true or false)
     end)
@@ -140,24 +135,31 @@ local function setControlEnabled(control, enabled)
         control:Disable()
     end
     local alpha = enabled and 1 or 0.45
+    if control.SetAlpha then
+        control:SetAlpha(alpha)
+    end
     if control.text then
-        control.text:SetTextColor(alpha, alpha, alpha)
+        control.text:SetTextColor(1, 1, 1)
+        control.text:SetAlpha(alpha)
     end
     if control.labelText then
-        control.labelText:SetTextColor(alpha, alpha, alpha)
+        control.labelText:SetTextColor(1, 1, 1)
+        control.labelText:SetAlpha(alpha)
     end
 end
 
 local function createEdit(parent, anchor, label, width, getter, setter)
     local labelText = createText(parent, 11)
     labelText:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -12)
+    labelText:SetWidth(250)
     labelText:SetText(label)
     local box = CreateFrame("EditBox", nil, parent)
     box:SetWidth(width or 70)
     box:SetHeight(20)
     box:SetPoint("LEFT", labelText, "RIGHT", 12, 0)
     box:SetAutoFocus(false)
-    box:SetFont(STANDARD_TEXT_FONT, 10)
+    box:SetFont(STANDARD_TEXT_FONT, 11, "")
+    box:SetTextColor(1, 1, 1)
     box:SetTextInsets(5, 5, 0, 0)
     setBackdrop(box, 0.055, 0.065, 0.08, 1)
     addBorderHover(box)
@@ -174,15 +176,7 @@ local function createEdit(parent, anchor, label, width, getter, setter)
 end
 
 local function layoutPanel()
-    if not optionsPanel then
-        return
-    end
-    local width = optionsPanel:GetWidth() or 620
-    local height = optionsPanel:GetHeight() or 560
-    optionsPanel.scroll:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 0, -4)
-    optionsPanel.scroll:SetPoint("BOTTOMRIGHT", optionsPanel, "BOTTOMRIGHT", -28, 4)
-    optionsPanel.content:SetWidth(math.max(520, width - 34))
-    optionsPanel.content:SetHeight(math.max(680, height + 160))
+    DudesUtils.SettingsUI.LayoutScrollablePanel(optionsPanel, 680)
 end
 
 local function createOptionsPanel()
@@ -190,32 +184,21 @@ local function createOptionsPanel()
         return optionsPanel
     end
 
-    optionsPanel = CreateFrame("Frame", "DudesLootTrackerOptionsPanel", UIParent)
-    optionsPanel.name = "DudesLootTracker"
+    optionsPanel = DudesUtils.SettingsUI.CreateScrollablePanel(
+        "DudesLootTrackerOptionsPanel",
+        "DudesLootTracker",
+        "DudesLootTrackerOptionsScrollFrame",
+        "DudesLootTrackerOptionsContent"
+    )
     optionsPanel.controls = {}
-    optionsPanel.scroll = CreateFrame("ScrollFrame", "DudesLootTrackerOptionsScrollFrame", optionsPanel, "UIPanelScrollFrameTemplate")
-    optionsPanel.content = CreateFrame("Frame", "DudesLootTrackerOptionsContent", optionsPanel.scroll)
-    optionsPanel.scroll:SetScrollChild(optionsPanel.content)
-    optionsPanel.scroll:EnableMouseWheel(true)
-    optionsPanel.scroll:SetScript("OnMouseWheel", function(self, delta)
-        local scrollBar = _G[self:GetName() .. "ScrollBar"]
-        if scrollBar then
-            local value = scrollBar:GetValue() or 0
-            local minValue, maxValue = scrollBar:GetMinMaxValues()
-            scrollBar:SetValue(ADDON.Clamp(value - delta * 32, minValue or 0, maxValue or 0))
-        end
-    end)
+    optionsPanel.scroll = optionsPanel.scrollFrame
 
     local content = optionsPanel.content
     local title = createText(content, 18)
     title:SetPoint("TOPLEFT", content, "TOPLEFT", 16, -16)
+    DudesUtils.SettingsUI.AnchorTextToContent(title, content)
     title:SetText("Dude's Loot Tracker")
-    local subtitle = createText(content, 11)
-    subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
-    subtitle:SetText("Loot- und Anzeige-Einstellungen")
-    subtitle:SetTextColor(0.8, 0.8, 0.8)
-
-    local c = createCheckbox(content, subtitle, -18, "Charakterspezifische Einstellungen", function()
+    local c = createCheckbox(content, title, -18, "Charakterspezifische Einstellungen", function()
         return ADDON.UsesCharacterSpecificSettings()
     end, function(value)
         ADDON.SetCharacterSpecificSettings(value)

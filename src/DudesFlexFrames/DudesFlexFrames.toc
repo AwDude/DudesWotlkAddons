@@ -3,7 +3,7 @@
 ## Notes: Prevents default frames from auto-closing and makes them scale- and movable.
 ## Version: 1.0
 ## Author: Dude
-## SavedVariables: DudesFlexFrames_Positions, DudesFlexFrames_Scales, DudesFlexFrames_Settings, DudesFlexFrames_CharacterSettings, DudesFlexFrames_ActiveRolls
+## SavedVariables: DudesFlexFrames_Positions, DudesFlexFrames_Scales, DudesFlexFrames_Settings, DudesFlexFrames_CharacterSettings
 ## Dependencies: DudesUtils
 
 Core.lua

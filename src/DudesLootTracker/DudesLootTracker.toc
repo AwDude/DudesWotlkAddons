@@ -1,6 +1,6 @@
 ## Interface: 30300
 ## Title: Dude's Loot Tracker
-## Notes: Loot tracking and roll automation for WotLK raids.
+## Notes: Loot tracking for WotLK raids.
 ## Version: 0.1
 ## Author: Dude
 ## SavedVariables: DudesLootTrackerDB
@@ -10,6 +10,5 @@ Bindings.xml
 Core.lua
 Data.lua
 Tracker.lua
-AutoRoll.lua
 UI.lua
 Settings.lua

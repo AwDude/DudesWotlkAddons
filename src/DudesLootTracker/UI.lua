@@ -15,6 +15,8 @@ local requestLootViewportRefresh
 local renderLootLayoutEntry
 local getInstanceGroupKey
 local getAreaType
+local rollMethodColumnTexts = {}
+local rollTooltipHooked
 local BORDER_R, BORDER_G, BORDER_B = 0.32, 0.38, 0.46
 local HOVER_R, HOVER_G, HOVER_B = 0.72, 0.86, 1
 local MIN_WIDTH, MIN_HEIGHT = 620, 340
@@ -38,19 +40,14 @@ local CONTROL_RANGE_INPUT_GAP = 5
 local CONTROL_LABEL_GAP = 6
 local CHECKBOX_LABEL_GAP = 13
 local CONTROL_ROW_HEIGHT = 26
-local CARD_GAP = 6
-local AREA_HEADER_HEIGHT = 28
-local COLLAPSED_AREA_HEIGHT = 34
-local ENEMY_ROW_HEIGHT = 26
+local CARD_GAP = 8
+local AREA_HEADER_HEIGHT = 15
+local COLLAPSED_AREA_HEIGHT = 15
 local ITEM_ROW_HEIGHT = 34
-local AREA_CONTENT_BOTTOM_PADDING = 8
-local LOOT_AREA_CONTENT_X = 24
-local LOOT_AREA_RIGHT_INSET = 12
-local LOOT_AREA_META_RIGHT_INSET = 24
-local LOOT_SEPARATOR_RIGHT_INSET = 16
-local AUTO_GREED_LABEL_PREFIX = "|cff1eff00Ungewöhnlich|r"
-local AUTO_GREED_LABEL_SUFFIX = " automatisch Gier/Entzaubern"
-local AUTO_GREED_LABEL_FULL = AUTO_GREED_LABEL_PREFIX .. AUTO_GREED_LABEL_SUFFIX
+local AREA_CONTENT_TOP_PADDING = 6
+local AREA_CONTENT_BOTTOM_PADDING = 6
+local LOOT_AREA_CONTENT_X = 8
+local LOOT_AREA_RIGHT_INSET = 8
 local function setBackdrop(frame, r, g, b, a)
     frame:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -379,6 +376,7 @@ local function acquireLootRow(index)
     end
     local row = CreateFrame("Frame", nil, window.lootContent)
     row:SetHeight(ROW_HEIGHT)
+    row.areaCard = CreateFrame("Frame", nil, row)
     row.icon = row:CreateTexture(nil, "ARTWORK")
     row.icon:SetWidth(22)
     row.icon:SetHeight(22)
@@ -392,18 +390,12 @@ local function acquireLootRow(index)
     row.count:SetTextColor(1, 1, 1)
     row.accent = row:CreateTexture(nil, "BACKGROUND")
     row.accent:SetTexture("Interface\\Buttons\\WHITE8X8")
-    row.separator = row:CreateTexture(nil, "ARTWORK")
-    row.separator:SetTexture("Interface\\Buttons\\WHITE8X8")
-    row.separatorRight = row:CreateTexture(nil, "ARTWORK")
-    row.separatorRight:SetTexture("Interface\\Buttons\\WHITE8X8")
     row.badge = createText(row, 8, "CENTER")
     row.expandText = createText(row, 12, "CENTER")
     row.text = createText(row, 10)
     row.subtext = createText(row, 8)
     row.detail = createText(row, 9, "RIGHT")
     row.method = createText(row, 8, "RIGHT")
-    row.enemyHitbox = CreateFrame("Frame", nil, row)
-    row.enemyHitbox:EnableMouse(true)
     row.itemHitbox = CreateFrame("Frame", nil, row)
     row.itemHitbox:EnableMouse(true)
     row.detailHitbox = CreateFrame("Frame", nil, row)
@@ -416,6 +408,9 @@ end
 
 local function resetLootRow(row)
     row.icon:Hide()
+    if row.areaCard then
+        row.areaCard:Hide()
+    end
     if row.count then
         row.count:Hide()
     end
@@ -435,11 +430,6 @@ local function resetLootRow(row)
         row.method:SetText("")
         row.method:SetJustifyH("RIGHT")
     end
-    if row.enemyHitbox then
-        row.enemyHitbox:Hide()
-        row.enemyHitbox:SetScript("OnEnter", nil)
-        row.enemyHitbox:SetScript("OnLeave", nil)
-    end
     if row.itemHitbox then
         row.itemHitbox:Hide()
         row.itemHitbox:SetScript("OnEnter", nil)
@@ -453,12 +443,6 @@ local function resetLootRow(row)
     end
     if row.accent then
         row.accent:Hide()
-    end
-    if row.separator then
-        row.separator:Hide()
-    end
-    if row.separatorRight then
-        row.separatorRight:Hide()
     end
     if row.badge then
         row.badge:Hide()
@@ -498,17 +482,6 @@ local function rowPassesFilters(item, segment)
     local isEmblem = ADDON.IsEmblem and ADDON.IsEmblem(item)
     if isEmblem then
         if not filters.emblems then
-            return false
-        end
-        local player = ADDON.GetPlayerName()
-        local receivedByPlayer
-        for _, recipient in ipairs(item.recipients or {}) do
-            if recipient.name == player or string.match(recipient.name or "", "^([^%-]+)") == player then
-                receivedByPlayer = true
-                break
-            end
-        end
-        if not receivedByPlayer then
             return false
         end
     end
@@ -562,6 +535,19 @@ local function formatRecipients(item)
     return table.concat(parts, ", ")
 end
 
+local function getLocalRecipient(item)
+    local player = ADDON.GetPlayerName()
+    local playerKey = player and string.lower(string.match(player, "^([^%-]+)") or player)
+    for _, recipient in ipairs(item and item.recipients or {}) do
+        local name = recipient.name or ""
+        local key = string.lower(string.match(name, "^([^%-]+)") or name)
+        if key == playerKey then
+            return recipient
+        end
+    end
+    return nil
+end
+
 local function formatLootTimestamp(timestamp)
     if timestamp and date then
         return date("%d.%m. %H:%M", timestamp)
@@ -569,11 +555,13 @@ local function formatLootTimestamp(timestamp)
     return ""
 end
 
-local function formatSegmentLootTimestamp(timestamp)
+local function formatItemClock(item)
+    local recipient = item and item.recipients and item.recipients[1]
+    local timestamp = recipient and recipient.timestamp or item and item.timestamp
     if timestamp and date then
-        return date("%d.%m.%Y %H:%M", timestamp)
+        return date("%H:%M", timestamp)
     end
-    return "Zeitpunkt unbekannt"
+    return ""
 end
 
 local function formatLootMethod(method)
@@ -583,14 +571,30 @@ local function formatLootMethod(method)
         greed = "Gier",
         need = "Bedarf",
         disenchant = "Entzaubern",
-        loot = "Geplündert",
+        pass = "Passen",
+        roll = "Wurf",
+        loot = "Erhalten",
         manual = "Manuell",
     }
     return labels[method] or method or ""
 end
 
 local function formatOwnership(item)
+    if ADDON.IsEmblem and ADDON.IsEmblem(item) then
+        local ownRecipient = getLocalRecipient(item)
+        if ownRecipient then
+            return ownRecipient.name or ADDON.GetPlayerName()
+        end
+        if #(item.recipients or {}) > 0 then
+            return "<andere>"
+        end
+    end
     if item and item.blizzardRollStarted and #(item.recipients or {}) == 0 then
+        if item.allPassed then
+            return "alle passen"
+        elseif item.rollClosed then
+            return "Wurf beendet"
+        end
         return "wird verwürfelt"
     end
     local recipients = formatRecipients(item)
@@ -601,6 +605,9 @@ local function formatOwnership(item)
 end
 
 local function formatLootMethodDetail(item)
+    if ADDON.IsEmblem and ADDON.IsEmblem(item) then
+        return ""
+    end
     if item and item.blizzardRollStarted and #(item.recipients or {}) == 0 then
         return ""
     end
@@ -615,6 +622,10 @@ local function formatLootMethodDetail(item)
 end
 
 local function formatLootTimestampDetail(item)
+    if ADDON.IsEmblem and ADDON.IsEmblem(item) then
+        local recipient = item and item.recipients and item.recipients[1]
+        return formatLootTimestamp(recipient and recipient.timestamp or item and item.timestamp)
+    end
     local parts = {}
     for _, recipient in ipairs(item.recipients or {}) do
         local timestamp = formatLootTimestamp(recipient.timestamp)
@@ -628,51 +639,6 @@ local function formatLootTimestampDetail(item)
         end
     end
     return table.concat(parts, "\n")
-end
-
-local function isDisenchantRoll(item)
-    if not item then
-        return false
-    end
-    if item.rollMethod == "disenchant" then
-        return true
-    end
-    for _, recipient in ipairs(item.recipients or {}) do
-        if recipient.method == "disenchant" then
-            return true
-        end
-    end
-    return false
-end
-
-local function formatDisenchantRewardDetails(item)
-    if not item or not item.disenchantRewards or #item.disenchantRewards == 0 then
-        return {}
-    end
-    local rewards = {}
-    local order = {}
-    for _, rewardEntry in ipairs(item.disenchantRewards) do
-        local rewardLink = type(rewardEntry) == "table" and rewardEntry.link or rewardEntry
-        local rewardCount = type(rewardEntry) == "table" and (tonumber(rewardEntry.count) or 1) or 1
-        local itemId = (type(rewardEntry) == "table" and rewardEntry.itemId) or ADDON.GetItemId(rewardLink) or tostring(rewardLink or "")
-        local reward = rewards[itemId]
-        if not reward then
-            reward = {
-                link = rewardLink,
-                count = 0,
-            }
-            rewards[itemId] = reward
-            table.insert(order, itemId)
-        end
-        reward.count = reward.count + rewardCount
-    end
-    local lines = {}
-    for _, itemId in ipairs(order) do
-        local reward = rewards[itemId]
-        local countText = reward.count > 1 and (" x" .. tostring(reward.count)) or ""
-        table.insert(lines, tostring(reward.link or "?") .. countText)
-    end
-    return lines
 end
 
 local function normalizeEquipmentType(subType, slot)
@@ -811,6 +777,15 @@ local function getAreaAccent(areaType)
     return 0.38, 0.42, 0.48
 end
 
+local function getAreaTextColor(areaType)
+    if areaType == "raid" then
+        return 0.7216, 0.5490, 1
+    elseif areaType == "instance" then
+        return 0.3451, 0.6510, 1
+    end
+    return 0.6039, 0.6392, 0.6902
+end
+
 local function getAreaTitle(segment)
     if not segment or not segment.raid or segment.raid == "" or segment.raid == "World" then
         return "Au\195\159erhalb"
@@ -849,10 +824,6 @@ local function getAreaStableKey(segment)
     return tostring(key or "outside")
 end
 
-local function getEnemyStableKey(segment)
-    return getAreaStableKey(segment) .. ":" .. tostring(segment and segment.id or segment and segment.sourceName or "")
-end
-
 local function isAreaExpanded(area)
     local value = collapsedLootAreas[area.key]
     if value == nil then
@@ -881,8 +852,109 @@ local function toggleAllLootExpanded()
     setAllLootExpanded(not anyExpanded)
 end
 
+local function hideRollMethodColumns()
+    for _, text in ipairs(rollMethodColumnTexts) do
+        text:Hide()
+    end
+end
+
+local function ensureRollTooltipHook()
+    if not rollTooltipHooked and GameTooltip and GameTooltip.HookScript then
+        GameTooltip:HookScript("OnHide", hideRollMethodColumns)
+        rollTooltipHooked = true
+    end
+end
+
+local function layoutRollMethodColumns(rows)
+    if #rows == 0 then
+        return
+    end
+    ensureRollTooltipHook()
+    if GameTooltip.SetMinimumWidth then
+        GameTooltip:SetMinimumWidth(220)
+    end
+    GameTooltip:Show()
+    for index, row in ipairs(rows) do
+        local leftLine = _G["GameTooltipTextLeft" .. tostring(row.lineIndex)]
+        local rightLine = _G["GameTooltipTextRight" .. tostring(row.lineIndex)]
+        if leftLine and rightLine then
+            local text = rollMethodColumnTexts[index]
+            if not text then
+                text = GameTooltip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                text:SetWidth(82)
+                text:SetJustifyH("CENTER")
+                rollMethodColumnTexts[index] = text
+            end
+            text:ClearAllPoints()
+            text:SetPoint("RIGHT", rightLine, "LEFT", -4, 0)
+            text:SetText(row.method)
+            text:SetTextColor(row.r, row.g, row.b)
+            text:Show()
+        end
+    end
+    for index = #rows + 1, #rollMethodColumnTexts do
+        rollMethodColumnTexts[index]:Hide()
+    end
+end
+
+local function addRecipientTooltip(item)
+    if not (ADDON.IsEmblem and ADDON.IsEmblem(item)) or #(item.recipients or {}) == 0 then
+        return
+    end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("Empfänger:", 1, 1, 1)
+    for _, recipient in ipairs(item.recipients or {}) do
+        local count = tonumber(recipient.count) or 1
+        GameTooltip:AddLine(tostring(recipient.name or "?") .. " x" .. tostring(count), 0.78, 0.82, 0.88)
+    end
+end
+
+local function addRollTooltip(item)
+    if not item.blizzardRollStarted then
+        return
+    end
+    GameTooltip:AddLine(" ")
+    local methodRows = {}
+    if #(item.rolls or {}) == 0 then
+        GameTooltip:AddLine("Keine einzelnen Würfelmeldungen empfangen", 1, 0.72, 0.25)
+    else
+        for _, roll in ipairs(item.rolls or {}) do
+            local method = formatLootMethod(roll.method)
+            local result = roll.result and tostring(roll.result) or ""
+            local r, g, b = 0.78, 0.82, 0.88
+            if roll.won then
+                r, g, b = 1, 0.82, 0
+            end
+            GameTooltip:AddDoubleLine(tostring(roll.name or "?"), result, r, g, b, r, g, b)
+            table.insert(methodRows, {
+                lineIndex = GameTooltip:NumLines(),
+                method = method,
+                r = r,
+                g = g,
+                b = b,
+            })
+        end
+    end
+    if (tonumber(item.rollInstances) or 1) > 1 then
+        GameTooltip:AddLine(
+            tostring(item.rollInstances) .. " identische Würfelvorgänge zusammengefasst",
+            0.72,
+            0.76,
+            0.84
+        )
+    end
+    if item.rollHistoryIncomplete then
+        GameTooltip:AddLine("Würfelverlauf möglicherweise unvollständig", 1, 0.72, 0.25)
+    end
+    layoutRollMethodColumns(methodRows)
+end
+
 local function setupItemTooltip(frame, item)
     frame:SetScript("OnEnter", function(self)
+        hideRollMethodColumns()
+        if GameTooltip.SetMinimumWidth then
+            GameTooltip:SetMinimumWidth(0)
+        end
         GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
         if item.link then
             GameTooltip:SetHyperlink(item.link)
@@ -896,28 +968,25 @@ local function setupItemTooltip(frame, item)
     end)
 end
 
-local function setupLootTimestampTooltip(frame, item)
+local function setupAssignmentTooltip(frame, item)
     local timestampText = formatLootTimestampDetail(item)
-    local rewardLines = isDisenchantRoll(item) and formatDisenchantRewardDetails(item) or {}
-    if timestampText == "" and #rewardLines == 0 then
+    local hasEmblemRecipients = ADDON.IsEmblem and ADDON.IsEmblem(item) and #(item.recipients or {}) > 0
+    if timestampText == "" and not item.blizzardRollStarted and not hasEmblemRecipients then
         return
     end
     frame:SetScript("OnEnter", function(self)
+        hideRollMethodColumns()
+        if GameTooltip.SetMinimumWidth then
+            GameTooltip:SetMinimumWidth(0)
+        end
         GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
         for line in string.gmatch(timestampText .. "\n", "([^\n]*)\n") do
             if line ~= "" then
                 GameTooltip:AddLine(line, 0.78, 0.82, 0.88)
             end
         end
-        if #rewardLines > 0 then
-            if timestampText ~= "" then
-                GameTooltip:AddLine(" ")
-            end
-            GameTooltip:AddLine("Entzauber-Ergebnis:", 1, 1, 1)
-            for _, rewardLine in ipairs(rewardLines) do
-                GameTooltip:AddLine(rewardLine, 0.78, 0.82, 0.88)
-            end
-        end
+        addRecipientTooltip(item)
+        addRollTooltip(item)
         GameTooltip:Show()
     end)
     frame:SetScript("OnLeave", function()
@@ -982,13 +1051,23 @@ local function addAreaHeader(index, area, y)
     row:SetHeight(height)
     row:SetFrameLevel((window.lootContent:GetFrameLevel() or 0) + 1)
     local r, g, b = getAreaAccent(area.areaType)
-    setBackdrop(row, 0.032 + r * 0.05, 0.038 + g * 0.05, 0.052 + b * 0.05, 0.98)
-    row:SetBackdropBorderColor(r, g, b, 0.95)
+    local textR, textG, textB = getAreaTextColor(area.areaType)
+    setBackdrop(row, 0, 0, 0, 0)
+    row:SetBackdropBorderColor(0, 0, 0, 0)
+    if isAreaExpanded(area) then
+        row.areaCard:ClearAllPoints()
+        row.areaCard:SetPoint("TOPLEFT", row, "TOPLEFT", 0, -AREA_HEADER_HEIGHT)
+        row.areaCard:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
+        row.areaCard:SetFrameLevel(row:GetFrameLevel() + 1)
+        setBackdrop(row.areaCard, 0.032 + r * 0.05, 0.038 + g * 0.05, 0.052 + b * 0.05, 0.98)
+        row.areaCard:SetBackdropBorderColor(textR, textG, textB, 0.95)
+        row.areaCard:Show()
+    end
     row.subtext:ClearAllPoints()
-    row.subtext:SetPoint("TOPRIGHT", row, "TOPRIGHT", -LOOT_AREA_META_RIGHT_INSET, isAreaExpanded(area) and -10 or -8)
-    row.subtext:SetHeight(18)
+    row.subtext:SetPoint("TOPRIGHT", row, "TOPRIGHT", -6, -1)
+    row.subtext:SetHeight(14)
     row.subtext:SetFont(STANDARD_TEXT_FONT, 9, "")
-    row.subtext:SetTextColor(0.78, 0.82, 0.88)
+    row.subtext:SetTextColor(textR, textG, textB)
     row.subtext:SetJustifyH("RIGHT")
     if row.subtext.SetWordWrap then
         row.subtext:SetWordWrap(false)
@@ -1011,92 +1090,28 @@ local function addAreaHeader(index, area, y)
     end
     row.subtext:SetWidth(metaWidth)
     row.text:ClearAllPoints()
-    row.text:SetPoint("TOPLEFT", row, "TOPLEFT", LOOT_AREA_CONTENT_X, isAreaExpanded(area) and -10 or -8)
+    row.text:SetPoint("TOPLEFT", row, "TOPLEFT", 6, -1)
     if meta ~= "" then
         row.text:SetPoint("RIGHT", row.subtext, "LEFT", -12, 0)
     else
         row.text:SetPoint("RIGHT", row, "RIGHT", -LOOT_AREA_RIGHT_INSET, 0)
     end
-    row.text:SetHeight(18)
-    row.text:SetFont(STANDARD_TEXT_FONT, 12, "")
+    row.text:SetHeight(14)
+    row.text:SetFont(STANDARD_TEXT_FONT, 11, "")
+    row.text:SetTextColor(textR, textG, textB)
     if row.text.SetWordWrap then
         row.text:SetWordWrap(false)
     end
     if row.text.SetNonSpaceWrap then
         row.text:SetNonSpaceWrap(false)
     end
-    row.text:SetText("|cffffffff" .. tostring(area.title or "?") .. "|r")
+    row.text:SetText(tostring(area.title or "?"))
     row:SetScript("OnMouseUp", function(_, button)
         if button == "LeftButton" then
             collapsedLootAreas[area.key] = isAreaExpanded(area)
             ADDON.RefreshMainWindow()
         end
     end)
-    rememberLootRow(row, y, height)
-    return y - height, index + 1
-end
-
-local function addEnemyRow(index, enemy, y)
-    local height = enemy.layoutHeight or ENEMY_ROW_HEIGHT
-    if not isLootRowInViewport(y, height) then
-        return y - height, index
-    end
-    local row = acquireLootRow(index)
-    resetLootRow(row)
-    row:SetPoint("TOPLEFT", window.lootContent, "TOPLEFT", 4, y)
-    row:SetPoint("RIGHT", window.lootContent, "RIGHT", -12, 0)
-    row:SetHeight(height)
-    row:SetFrameLevel((window.lootContent:GetFrameLevel() or 0) + 2)
-    setBackdrop(row, 0.035, 0.041, 0.052, 0)
-    row:SetBackdropBorderColor(0.18, 0.21, 0.28, 0)
-    row.text:ClearAllPoints()
-    row.text:SetPoint("TOP", row, "TOP", 0, -4)
-    row.text:SetHeight(18)
-    row.text:SetFont(STANDARD_TEXT_FONT, 10, "")
-    row.text:SetJustifyH("CENTER")
-    row.text:SetText("|cffffffff" .. tostring(enemy.title or "?") .. "|r")
-    local textWidth = row.text.GetStringWidth and (row.text:GetStringWidth() or 0) or 120
-    local labelWidth = math.max(90, textWidth + 14)
-    row.text:SetWidth(labelWidth)
-    if row.enemyHitbox then
-        local enemyTitle = tostring(enemy.title or "Gegner")
-        local timestampText = formatSegmentLootTimestamp(enemy.segment and enemy.segment.timestamp)
-        row.enemyHitbox:ClearAllPoints()
-        row.enemyHitbox:SetPoint("TOPLEFT", row.text, "TOPLEFT", -4, 2)
-        row.enemyHitbox:SetPoint("BOTTOMRIGHT", row.text, "BOTTOMRIGHT", 4, -2)
-        row.enemyHitbox:SetFrameLevel(row:GetFrameLevel() + 1)
-        row.enemyHitbox:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-            GameTooltip:AddLine(enemyTitle, 1, 1, 1)
-            GameTooltip:AddLine("Gelootet: " .. timestampText, 0.78, 0.82, 0.88)
-            GameTooltip:Show()
-        end)
-        row.enemyHitbox:SetScript("OnLeave", function()
-            GameTooltip:Hide()
-        end)
-        row.enemyHitbox:Show()
-    end
-    if row.separator and row.separatorRight then
-        local r, g, b = getAreaAccent(enemy.areaType)
-        local rowWidth = row:GetWidth() or 600
-        local labelHalfWidth = labelWidth / 2
-        local centerX = rowWidth / 2
-        local leftEndX = centerX - labelHalfWidth - 6
-        local rightStartX = centerX + labelHalfWidth + 6
-        local lineY = -13
-        row.separator:Show()
-        row.separator:ClearAllPoints()
-        row.separator:SetPoint("TOPLEFT", row, "TOPLEFT", LOOT_AREA_CONTENT_X, lineY)
-        row.separator:SetPoint("TOPRIGHT", row, "TOPLEFT", leftEndX, lineY)
-        row.separator:SetHeight(1)
-        row.separator:SetVertexColor(r, g, b, 0.85)
-        row.separatorRight:Show()
-        row.separatorRight:ClearAllPoints()
-        row.separatorRight:SetPoint("TOPLEFT", row, "TOPLEFT", rightStartX, lineY)
-        row.separatorRight:SetPoint("TOPRIGHT", row, "TOPRIGHT", -LOOT_SEPARATOR_RIGHT_INSET, lineY)
-        row.separatorRight:SetHeight(1)
-        row.separatorRight:SetVertexColor(r, g, b, 0.85)
-    end
     rememberLootRow(row, y, height)
     return y - height, index + 1
 end
@@ -1108,7 +1123,7 @@ local function addItemRow(index, item, y)
     local row = acquireLootRow(index)
     resetLootRow(row)
     row:SetPoint("TOPLEFT", window.lootContent, "TOPLEFT", 4, y)
-    row:SetPoint("RIGHT", window.lootContent, "RIGHT", -16, 0)
+    row:SetPoint("RIGHT", window.lootContent, "RIGHT", -4, 0)
     row:SetHeight(ITEM_ROW_HEIGHT)
     row:SetFrameLevel((window.lootContent:GetFrameLevel() or 0) + 3)
     row.icon:Show()
@@ -1119,7 +1134,7 @@ local function addItemRow(index, item, y)
     row.icon:SetTexture(item.texture or "Interface\\Icons\\INV_Misc_QuestionMark")
     local count = tonumber(item.count or 1) or 1
     if row.count then
-        if count > 1 then
+        if count > 1 or (ADDON.IsEmblem and ADDON.IsEmblem(item)) then
             row.count:SetText(tostring(count))
             row.count:Show()
         else
@@ -1131,7 +1146,7 @@ local function addItemRow(index, item, y)
     row.detail:ClearAllPoints()
     row.detail:SetPoint("TOPRIGHT", row, "TOPRIGHT", -LOOT_AREA_RIGHT_INSET, -2)
     row.detail:SetHeight(14)
-    row.detail:SetFont(STANDARD_TEXT_FONT, 9, "")
+    row.detail:SetFont(STANDARD_TEXT_FONT, 10, "")
     row.detail:SetJustifyH("RIGHT")
     row.detail:SetTextColor(0.88, 0.91, 0.96)
     if row.detail.SetWordWrap then
@@ -1142,17 +1157,22 @@ local function addItemRow(index, item, y)
     end
     local ownerText = formatOwnership(item)
     local methodText = formatLootMethodDetail(item)
+    local clockText = formatItemClock(item)
+    local timedMethodText = clockText
+    if methodText ~= "" then
+        timedMethodText = timedMethodText ~= "" and (timedMethodText .. "   " .. methodText) or methodText
+    end
     row.detail:SetText(ownerText)
     row.method:ClearAllPoints()
     row.method:SetPoint("TOPRIGHT", row.detail, "BOTTOMRIGHT", 0, -1)
     row.method:SetHeight(13)
-    row.method:SetFont(STANDARD_TEXT_FONT, 8, "")
+    row.method:SetFont(STANDARD_TEXT_FONT, 9, "")
     row.method:SetJustifyH("RIGHT")
     row.method:SetTextColor(0.65, 0.71, 0.80)
-    row.method:SetText(methodText)
+    row.method:SetText(timedMethodText)
     local measuredDetailWidth = math.max(
         measureMultilineTextWidth(row.detail, ownerText),
-        measureMultilineTextWidth(row.method, methodText)
+        measureMultilineTextWidth(row.method, timedMethodText)
     )
     local maxDetailWidth = math.max(90, math.min(180, math.floor((row:GetWidth() or 520) * 0.42)))
     local detailWidth = math.min(maxDetailWidth, math.max(70, measuredDetailWidth + 12))
@@ -1187,7 +1207,7 @@ local function addItemRow(index, item, y)
         row.detailHitbox:ClearAllPoints()
         row.detailHitbox:SetPoint("TOPLEFT", row.detail, "TOPLEFT", 0, 0)
         row.detailHitbox:SetPoint("BOTTOMRIGHT", row.method, "BOTTOMRIGHT", 0, 0)
-        setupLootTimestampTooltip(row.detailHitbox, item)
+        setupAssignmentTooltip(row.detailHitbox, item)
     end
     rememberLootRow(row, y, ITEM_ROW_HEIGHT)
     return y - ITEM_ROW_HEIGHT, index + 1
@@ -1232,13 +1252,82 @@ end
 function renderLootLayoutEntry(index, entry)
     if entry.kind == "area" then
         addAreaHeader(index, entry.area, entry.y)
-    elseif entry.kind == "enemy" then
-        addEnemyRow(index, entry.enemy, entry.y)
     elseif entry.kind == "item" then
         addItemRow(index, entry.item, entry.y)
     elseif entry.kind == "detail" then
         addDetailRow(index, entry.y, entry.text, entry.detail)
     end
+end
+
+local function getDisplayRecipientKey(name)
+    name = tostring(name or "")
+    name = string.match(name, "^([^%-]+)") or name
+    return string.lower(name)
+end
+
+local function copyDisplayItem(item)
+    local copy = {}
+    for key, value in pairs(item or {}) do
+        if key ~= "recipients" then
+            copy[key] = value
+        end
+    end
+    copy.recipients = {}
+    for _, recipient in ipairs(item and item.recipients or {}) do
+        local recipientCopy = {}
+        for key, value in pairs(recipient) do
+            recipientCopy[key] = value
+        end
+        table.insert(copy.recipients, recipientCopy)
+    end
+    return copy
+end
+
+local function mergeDisplayEmblem(target, source)
+    local recipientsByName = {}
+    for _, recipient in ipairs(target.recipients or {}) do
+        recipientsByName[getDisplayRecipientKey(recipient.name)] = recipient
+    end
+    for _, recipient in ipairs(source.recipients or {}) do
+        local key = getDisplayRecipientKey(recipient.name)
+        local existing = recipientsByName[key]
+        if existing then
+            existing.count = (tonumber(existing.count) or 1) + (tonumber(recipient.count) or 1)
+        else
+            local recipientCopy = {}
+            for field, value in pairs(recipient) do
+                recipientCopy[field] = value
+            end
+            table.insert(target.recipients, recipientCopy)
+            recipientsByName[key] = recipientCopy
+        end
+    end
+    local localRecipient = getLocalRecipient(target)
+    local displayRecipient = localRecipient or target.recipients[1]
+    target.count = math.max(1, tonumber(displayRecipient and displayRecipient.count) or 1)
+end
+
+local function appendDisplayItem(area, item)
+    if not (ADDON.IsEmblem and ADDON.IsEmblem(item)) then
+        table.insert(area.items, item)
+        return true
+    end
+    area.emblems = area.emblems or {}
+    local itemId = tonumber(item.itemId) or ADDON.GetItemId(item.link)
+    local existing = itemId and area.emblems[itemId]
+    if existing then
+        mergeDisplayEmblem(existing, item)
+        return false
+    end
+    local displayItem = copyDisplayItem(item)
+    local localRecipient = getLocalRecipient(displayItem)
+    local displayRecipient = localRecipient or displayItem.recipients[1]
+    displayItem.count = math.max(1, tonumber(displayRecipient and displayRecipient.count) or 1)
+    table.insert(area.items, displayItem)
+    if itemId then
+        area.emblems[itemId] = displayItem
+    end
+    return true
 end
 
 local function buildLootAreas(segments, maxVisibleItems)
@@ -1253,15 +1342,11 @@ local function buildLootAreas(segments, maxVisibleItems)
         local segment = segments[i]
         local visibleItems = {}
         for _, item in ipairs(segment.items or {}) do
-            if maxVisibleItems > 0 and visibleItemCount >= maxVisibleItems then
-                break
-            end
             if not item.infoReady then
                 ADDON.RefreshItemInfo(item)
             end
             if rowPassesFilters(item, segment) then
                 table.insert(visibleItems, item)
-                visibleItemCount = visibleItemCount + 1
             end
         end
 
@@ -1276,24 +1361,20 @@ local function buildLootAreas(segments, maxVisibleItems)
                     areaType = areaType,
                     instanceId = getInstanceIdText(segment),
                     sizeText = formatAreaSize(segment),
-                    enemies = {},
+                    items = {},
                 }
                 areas[areaKey] = area
                 table.insert(areaOrder, area)
             end
 
-            local title = tostring(segment.sourceName or "")
-            if title == "" then
-                title = "Unbekannt"
+            for _, item in ipairs(visibleItems) do
+                if appendDisplayItem(area, item) then
+                    visibleItemCount = visibleItemCount + 1
+                    if maxVisibleItems > 0 and visibleItemCount >= maxVisibleItems then
+                        break
+                    end
+                end
             end
-            local enemy = {
-                key = getEnemyStableKey(segment),
-                title = title,
-                segment = segment,
-                areaType = area.areaType,
-                items = visibleItems,
-            }
-            table.insert(area.enemies, enemy)
         end
     end
 
@@ -1315,11 +1396,8 @@ local function refreshLootContent()
     for _, area in ipairs(areas) do
         local areaHeight = AREA_HEADER_HEIGHT
         if isAreaExpanded(area) then
-            for _, enemy in ipairs(area.enemies or {}) do
-                local enemyHeight = ENEMY_ROW_HEIGHT + (#(enemy.items or {}) * ITEM_ROW_HEIGHT)
-                enemy.layoutHeight = enemyHeight
-                areaHeight = areaHeight + enemyHeight
-            end
+            areaHeight = areaHeight + AREA_CONTENT_TOP_PADDING
+            areaHeight = areaHeight + (#(area.items or {}) * ITEM_ROW_HEIGHT)
             areaHeight = areaHeight + AREA_CONTENT_BOTTOM_PADDING
         else
             areaHeight = COLLAPSED_AREA_HEIGHT
@@ -1328,13 +1406,10 @@ local function refreshLootContent()
         appendLootLayoutEntry("area", y, areaHeight, { area = area })
         y = y - (isAreaExpanded(area) and AREA_HEADER_HEIGHT or COLLAPSED_AREA_HEIGHT)
         if isAreaExpanded(area) then
-            for _, enemy in ipairs(area.enemies or {}) do
-                appendLootLayoutEntry("enemy", y, enemy.layoutHeight or ENEMY_ROW_HEIGHT, { enemy = enemy })
-                y = y - ENEMY_ROW_HEIGHT
-                for _, item in ipairs(enemy.items or {}) do
-                    appendLootLayoutEntry("item", y, ITEM_ROW_HEIGHT, { item = item })
-                    y = y - ITEM_ROW_HEIGHT
-                end
+            y = y - AREA_CONTENT_TOP_PADDING
+            for _, item in ipairs(area.items or {}) do
+                appendLootLayoutEntry("item", y, ITEM_ROW_HEIGHT, { item = item })
+                y = y - ITEM_ROW_HEIGHT
             end
             y = y - AREA_CONTENT_BOTTOM_PADDING
         end
@@ -1405,37 +1480,10 @@ local function refreshControls()
     window.controls.uncommon:SetChecked(filters.qualities.uncommon)
     window.controls.common:SetChecked(filters.qualities.common)
     window.controls.poor:SetChecked(filters.qualities.poor)
-    window.autoGreedDisenchant:SetChecked(ADDON.GetSettings().autoGreedDisenchantUncommon and true or false)
     filters.areas = filters.areas or { raid = true, instance = true, world = true }
     window.controls.raid:SetChecked(filters.areas.raid)
     window.controls.instance:SetChecked(filters.areas.instance)
     window.controls.world:SetChecked(filters.areas.world)
-end
-
-local function updateAutoGreedLabel()
-    if not window or not window.autoGreedDisenchant or not window.autoGreedDisenchant.text then
-        return
-    end
-    local label = window.autoGreedDisenchant.text
-    local availableWidth = label:GetWidth() or 0
-    if availableWidth <= 0 then
-        return
-    end
-
-    label:SetText(AUTO_GREED_LABEL_FULL)
-    if (label:GetStringWidth() or 0) <= availableWidth then
-        return
-    end
-
-    for length = #AUTO_GREED_LABEL_SUFFIX, 0, -1 do
-        local suffix = string.sub(AUTO_GREED_LABEL_SUFFIX, 1, length)
-        suffix = string.gsub(suffix, "%s+$", "")
-        label:SetText(AUTO_GREED_LABEL_PREFIX .. suffix .. "...")
-        if (label:GetStringWidth() or 0) <= availableWidth then
-            return
-        end
-    end
-    label:SetText(AUTO_GREED_LABEL_PREFIX .. "...")
 end
 
 local function addControl(parent, control, y, height, titleStyle)
@@ -1597,16 +1645,6 @@ local function createControls()
     window.lootTitleButton = CreateFrame("Button", nil, window)
     window.lootTitleButton:SetScript("OnClick", toggleAllLootExpanded)
     window.lootTitleButton:HookScript("OnMouseDown", clearFocusedNumberBox)
-    window.autoGreedDisenchant = createCheckbox(window, AUTO_GREED_LABEL_FULL)
-    window.autoGreedDisenchant.text:SetFont(STANDARD_TEXT_FONT, 10, "")
-    window.autoGreedDisenchant.text:SetPoint("LEFT", window.autoGreedDisenchant, "RIGHT", 2, 0)
-    window.autoGreedDisenchant.text:SetHeight(22)
-    if window.autoGreedDisenchant.text.SetWordWrap then
-        window.autoGreedDisenchant.text:SetWordWrap(false)
-    end
-    window.autoGreedDisenchant:SetScript("OnClick", function(self)
-        ADDON.GetSettings().autoGreedDisenchantUncommon = self:GetChecked() and true or false
-    end)
     local reset = createSmallButton(filterFrame, "Zurücksetzen", 88)
     window.resetFiltersButton = reset
     reset:GetFontString():SetFont(STANDARD_TEXT_FONT, 10, "")
@@ -1776,17 +1814,6 @@ local function layoutWindow(refreshContent)
             window.lootTitleButton:SetWidth(54)
             window.lootTitleButton:SetHeight(22)
         end
-        if window.autoGreedDisenchant then
-            window.autoGreedDisenchant:ClearAllPoints()
-            window.autoGreedDisenchant:SetPoint("LEFT", window.lootTitle, "RIGHT", 6, 0)
-            window.autoGreedDisenchant.text:ClearAllPoints()
-            window.autoGreedDisenchant.text:SetPoint("LEFT", window.autoGreedDisenchant, "RIGHT", 2, 0)
-            window.autoGreedDisenchant.text:SetPoint("RIGHT", window.settings, "LEFT", -8, 0)
-            window.autoGreedDisenchant:Show()
-            window.autoGreedDisenchant.text:Show()
-            updateAutoGreedLabel()
-        end
-
     end
 
     window.close:ClearAllPoints()

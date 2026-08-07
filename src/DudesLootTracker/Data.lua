@@ -19,6 +19,7 @@ local EMBLEM_ITEM_IDS = {
     [45624] = true, -- Emblem of Conquest
     [47241] = true, -- Emblem of Triumph
     [49426] = true, -- Emblem of Frost
+    [44990] = true, -- Champion's Seal
 }
 
 local function parseItemId(link)
@@ -217,14 +218,14 @@ function ADDON.AllocateItemId()
     return id
 end
 
-function ADDON.CreateSegment(sourceName)
+function ADDON.CreateSegment(kind)
     local context = ADDON.GetInstanceContext()
     local lootMethod = ADDON.GetLootMethodContext()
     local raidKey, raidInfo = ADDON.GetCurrentRaidKey()
     return {
         id = ADDON.AllocateSegmentId(),
         timestamp = ADDON.GetNow(),
-        sourceName = sourceName,
+        kind = kind or "unassigned",
         raid = context.raid,
         instanceType = context.instanceType,
         raidSize = context.size or raidInfo.size,
@@ -284,57 +285,13 @@ function ADDON.FindItemById(itemId)
     return nil
 end
 
-function ADDON.FindLatestItemByItemId(itemId)
-    if not itemId then
+function ADDON.AddItemToSegment(segment, link, count)
+    if not segment or not link then
         return nil
     end
-    local segments = ADDON.GetCharacterDB().segments or {}
-    for i = #segments, 1, -1 do
-        local segment = segments[i]
-        for j = #(segment.items or {}), 1, -1 do
-            local item = segment.items[j]
-            if item.itemId == itemId then
-                return item, segment
-            end
-        end
-    end
-    return nil
-end
-
-function ADDON.FindRollCandidateByItemId(itemId)
-    if not itemId then
-        return nil
-    end
-    local segments = ADDON.GetCharacterDB().segments or {}
-    for i = #segments, 1, -1 do
-        local segment = segments[i]
-        for j = #(segment.items or {}), 1, -1 do
-            local item = segment.items[j]
-            if item.itemId == itemId
-                and not item.blizzardRollStarted
-                and #(item.recipients or {}) == 0 then
-                return item, segment
-            end
-        end
-    end
-    return nil
-end
-
-function ADDON.FindRecipientCandidateByItemId(itemId)
-    if not itemId then
-        return nil
-    end
-    local segments = ADDON.GetCharacterDB().segments or {}
-    for i = #segments, 1, -1 do
-        local segment = segments[i]
-        for j = #(segment.items or {}), 1, -1 do
-            local item = segment.items[j]
-            if item.itemId == itemId
-                and #(item.recipients or {}) == 0
-                and item.blizzardRollStarted then
-                return item, segment
-            end
-        end
-    end
-    return nil
+    local item = ADDON.BuildItem(link, count)
+    item.id = ADDON.AllocateItemId()
+    item.timestamp = ADDON.GetNow()
+    table.insert(segment.items, item)
+    return item
 end

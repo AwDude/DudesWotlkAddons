@@ -1,155 +1,107 @@
 local ADDON = DudesFlexFrames
 local settingsPanel
-local controls = {}
+local characterSpecificSettings
+local BORDER_R, BORDER_G, BORDER_B = 0.32, 0.38, 0.46
+local HOVER_BORDER_R, HOVER_BORDER_G, HOVER_BORDER_B = 0.72, 0.86, 1
 
-local function createText(parent, size, justify)
-	local text = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	text:SetFont(STANDARD_TEXT_FONT, size or 11)
-	text:SetJustifyH(justify or "LEFT")
-	return text
+local function setBackdrop(frame, r, g, b, a)
+    frame:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 16,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 },
+    })
+    frame:SetBackdropColor(r, g, b, a)
+    frame:SetBackdropBorderColor(BORDER_R, BORDER_G, BORDER_B, 1)
+end
+
+local function styleButton(button)
+    if button:GetNormalTexture() then
+        button:GetNormalTexture():SetTexture(nil)
+    end
+    if button:GetPushedTexture() then
+        button:GetPushedTexture():SetTexture(nil)
+    end
+    if button:GetDisabledTexture() then
+        button:GetDisabledTexture():SetTexture(nil)
+    end
+    button:SetHighlightTexture("Interface\\Buttons\\WHITE8X8")
+    if button:GetHighlightTexture() then
+        button:GetHighlightTexture():SetVertexColor(0, 0, 0, 0)
+    end
+    setBackdrop(button, 0.055, 0.065, 0.08, 1)
+    button:HookScript("OnEnter", function(self)
+        self:SetBackdropBorderColor(HOVER_BORDER_R, HOVER_BORDER_G, HOVER_BORDER_B, 1)
+    end)
+    button:HookScript("OnLeave", function(self)
+        self:SetBackdropBorderColor(BORDER_R, BORDER_G, BORDER_B, 1)
+    end)
+    DudesUtils.SettingsUI.StyleButtonText(button)
+end
+
+local function createCheckbox(parent, anchor, yOffset, label, setter)
+    local checkbox = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+    checkbox:SetWidth(22)
+    checkbox:SetHeight(24)
+    checkbox:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, yOffset)
+    DudesUtils.SettingsUI.CreateCheckboxLabel(checkbox, parent, label)
+    checkbox:SetScript("OnClick", function(self)
+        setter(self:GetChecked() and true or false)
+    end)
+    return checkbox
+end
+
+local function layoutPanel()
+    DudesUtils.SettingsUI.LayoutScrollablePanel(settingsPanel, 620)
 end
 
 local function refreshControls()
-	local settings = ADDON.GetSettings()
-	if controls.characterSpecificSettings then
-		controls.characterSpecificSettings:SetChecked(ADDON.UsesCharacterSpecificSettings and ADDON.UsesCharacterSpecificSettings() or false)
-	end
-	if controls.restoreOpenRolls then
-		controls.restoreOpenRolls:SetChecked(settings.restoreOpenRolls and true or false)
-	end
-	if controls.autoConfirmLootDialogs then
-		controls.autoConfirmLootDialogs:SetChecked(settings.autoConfirmLootDialogs and true or false)
-	end
-	if controls.singleRollFrame then
-		controls.singleRollFrame:SetChecked(settings.singleRollFrame and true or false)
-	end
-	if controls.showOpenRollCount then
-		controls.showOpenRollCount:SetChecked(settings.showOpenRollCount and true or false)
-		if controls.singleRollFrame then
-			controls.showOpenRollCount:ClearAllPoints()
-			controls.showOpenRollCount:SetPoint("TOPLEFT", controls.singleRollFrame, "BOTTOMLEFT", 0, -4)
-		end
-		if settings.singleRollFrame then
-			controls.showOpenRollCount:Show()
-			controls.showOpenRollCount.text:Show()
-		else
-			controls.showOpenRollCount:Hide()
-			controls.showOpenRollCount.text:Hide()
-		end
-	end
-	if controls.rollFrameSpacing then
-		if controls.singleRollFrame then
-			controls.rollFrameSpacing:ClearAllPoints()
-			controls.rollFrameSpacing:SetPoint("TOPLEFT", controls.singleRollFrame, "BOTTOMLEFT", 6, -24)
-		end
-		controls.rollFrameSpacing:SetValue(settings.rollFrameSpacing or 0)
-		if controls.rollFrameSpacing.valueText then
-			controls.rollFrameSpacing.valueText:SetText(tostring(settings.rollFrameSpacing or 0))
-		end
-		if settings.singleRollFrame then
-			controls.rollFrameSpacing:Hide()
-			controls.rollFrameSpacing.valueText:Hide()
-		else
-			controls.rollFrameSpacing:Show()
-			controls.rollFrameSpacing.valueText:Show()
-		end
-	end
-end
-
-local function settingChanged()
-	refreshControls()
-	if ADDON.RefreshGroupLootFrames then
-		ADDON.RefreshGroupLootFrames()
-	end
-end
-
-local function createCheckbox(parent, anchor, yOffset, label, settingKey, setter)
-	local checkbox = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
-	checkbox:SetWidth(22)
-	checkbox:SetHeight(22)
-	checkbox:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, yOffset)
-	checkbox.text = checkbox:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	checkbox.text:SetPoint("LEFT", checkbox, "RIGHT", 2, 1)
-	checkbox.text:SetText(label)
-	checkbox:SetScript("OnClick", function(self)
-		local value = self:GetChecked() and true or false
-		if setter then
-			setter(value)
-		else
-			ADDON.GetSettings()[settingKey] = value
-		end
-		settingChanged()
-	end)
-	return checkbox
-end
-
-local function createSpacingSlider(parent, anchor)
-	local sliderName = "DudesFlexFramesRollSpacingSlider"
-	local slider = CreateFrame("Slider", sliderName, parent, "OptionsSliderTemplate")
-	slider:SetWidth(180)
-	slider:SetHeight(16)
-	slider:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 6, -24)
-	slider:SetMinMaxValues(0, 60)
-	slider:SetValueStep(1)
-	_G[sliderName .. "Low"]:SetText("0")
-	_G[sliderName .. "High"]:SetText("60")
-	_G[sliderName .. "Text"]:SetText("Abstand zwischen Würfelfenstern")
-	slider.valueText = createText(parent, 11, "LEFT")
-	slider.valueText:SetPoint("LEFT", slider, "RIGHT", 16, 0)
-	slider:SetScript("OnValueChanged", function(self, value)
-		value = math.floor((tonumber(value) or 0) + 0.5)
-		ADDON.GetSettings().rollFrameSpacing = value
-		if self.valueText then
-			self.valueText:SetText(tostring(value))
-		end
-		if ADDON.RefreshGroupLootFrames then
-			ADDON.RefreshGroupLootFrames()
-		end
-	end)
-	return slider
+    if characterSpecificSettings then
+        characterSpecificSettings:SetChecked(ADDON.UsesCharacterSpecificSettings and ADDON.UsesCharacterSpecificSettings() or false)
+    end
 end
 
 local function createOptionsPanel()
-	if settingsPanel then
-		return settingsPanel
-	end
+    if settingsPanel then
+        return settingsPanel
+    end
 
-	settingsPanel = CreateFrame("Frame", "DudesFlexFramesOptionsPanel", UIParent)
-	settingsPanel.name = "DudesFlexFrames"
+    settingsPanel = DudesUtils.SettingsUI.CreateScrollablePanel(
+        "DudesFlexFramesOptionsPanel",
+        "DudesFlexFrames",
+        "DudesFlexFramesOptionsScrollFrame",
+        "DudesFlexFramesOptionsContent"
+    )
+    local content = settingsPanel.content
 
-	local title = createText(settingsPanel, 18)
-	title:SetPoint("TOPLEFT", settingsPanel, "TOPLEFT", 16, -16)
-	title:SetText("Dude's Flexible Frames")
+    local title = DudesUtils.SettingsUI.CreateText(content, "title")
+    title:SetPoint("TOPLEFT", content, "TOPLEFT", 16, -16)
+    DudesUtils.SettingsUI.AnchorTextToContent(title, content)
+    title:SetText("Dude's Flexible Frames")
 
-	local subtitle = createText(settingsPanel, 11)
-	subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
-	subtitle:SetText("Positionen und Skalierungen der verschiebbaren Frames")
-	subtitle:SetTextColor(0.8, 0.8, 0.8)
+    characterSpecificSettings = createCheckbox(content, title, -18, "Charakterspezifische Einstellungen", function(value)
+        ADDON.SetCharacterSpecificSettings(value)
+    end)
 
-	controls.characterSpecificSettings = createCheckbox(settingsPanel, subtitle, -12, "Charakterspezifische Einstellungen", nil, function(value)
-		ADDON.SetCharacterSpecificSettings(value)
-	end)
+    local resetButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    resetButton:SetWidth(170)
+    resetButton:SetHeight(24)
+    resetButton:SetPoint("TOPLEFT", characterSpecificSettings, "BOTTOMLEFT", 0, -14)
+    resetButton:SetText("Alle Frames zurücksetzen")
+    styleButton(resetButton)
+    resetButton:SetScript("OnClick", ADDON.ResetFrames)
 
-	local resetButton = CreateFrame("Button", nil, settingsPanel, "UIPanelButtonTemplate")
-	resetButton:SetWidth(170)
-	resetButton:SetHeight(24)
-	resetButton:SetPoint("TOPLEFT", controls.characterSpecificSettings, "BOTTOMLEFT", 0, -14)
-	resetButton:SetText("Alle Frames zurücksetzen")
-	resetButton:SetScript("OnClick", ADDON.ResetFrames)
-
-	local rollTitle = createText(settingsPanel, 14)
-	rollTitle:SetPoint("TOPLEFT", resetButton, "BOTTOMLEFT", 0, -28)
-	rollTitle:SetText("Würfel Fenster")
-
-	controls.restoreOpenRolls = createCheckbox(settingsPanel, rollTitle, -10, "Offene Würfe nach Ladebildschirm wieder einblenden", "restoreOpenRolls")
-	controls.autoConfirmLootDialogs = createCheckbox(settingsPanel, controls.restoreOpenRolls, -4, "Beute Dialoge automatisch bestätigen", "autoConfirmLootDialogs")
-	controls.singleRollFrame = createCheckbox(settingsPanel, controls.autoConfirmLootDialogs, -4, "Einzelnes Würfelfenster", "singleRollFrame")
-	controls.showOpenRollCount = createCheckbox(settingsPanel, controls.singleRollFrame, -4, "Anzahl offener Würfe anzeigen", "showOpenRollCount")
-	controls.rollFrameSpacing = createSpacingSlider(settingsPanel, controls.singleRollFrame)
-	refreshControls()
-
-	InterfaceOptions_AddCategory(settingsPanel)
-	return settingsPanel
+    settingsPanel:SetScript("OnShow", function()
+        layoutPanel()
+        refreshControls()
+    end)
+    settingsPanel:SetScript("OnSizeChanged", layoutPanel)
+    layoutPanel()
+    refreshControls()
+    InterfaceOptions_AddCategory(settingsPanel)
+    return settingsPanel
 end
 
 DudesUtils.EventHandler.Add("PLAYER_LOGIN", createOptionsPanel)
