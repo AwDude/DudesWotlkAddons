@@ -8,7 +8,9 @@ local pendingRollItems = {}
 local pendingDisenchantLoots = {}
 local registeredLootChatFilter
 local formatPatternCache = {}
+local recentDeadSource
 local LOOT_GROUP_SECONDS = 8
+local RECENT_SOURCE_SECONDS = 30
 local PENDING_DECISION_SECONDS = 120
 local DISENCHANT_REWARD_SECONDS = 60
 local DISENCHANT_MATERIAL_IDS = {
@@ -174,19 +176,62 @@ local function isUnknownName(name)
         or (UNKNOWNOBJECT and name == UNKNOWNOBJECT)
 end
 
-local function getLootSourceName()
-    if UnitName and UnitExists and UnitExists("target") and UnitIsDead("target") then
-        local name = UnitName("target")
-        if not isUnknownName(name) then
-            return name
-        end
+local function rememberDeadSource(guid, name)
+    if not guid or isUnknownName(name) then
+        return
     end
+    recentDeadSource = {
+        guid = guid,
+        name = name,
+        timestamp = ADDON.GetNow(),
+    }
+end
+
+local function getUnitLootSourceName(unit)
+    if not UnitExists or not UnitExists(unit) then
+        return nil
+    end
+    if UnitCanAttack and not UnitCanAttack("player", unit) then
+        return nil
+    end
+    if UnitIsDeadOrGhost then
+        if not UnitIsDeadOrGhost(unit) then
+            return nil
+        end
+    elseif UnitIsDead and not UnitIsDead(unit) then
+        return nil
+    end
+    local name = UnitName and UnitName(unit)
+    if isUnknownName(name) then
+        return nil
+    end
+    local guid = UnitGUID and UnitGUID(unit)
+    rememberDeadSource(guid, name)
+    return name
+end
+
+local function getLootSourceName()
+    -- With autoloot the target can disappear before CHAT_MSG_LOOT arrives.
+    -- Mouseover still points at the corpse while LOOT_OPENED is being handled.
+    local name = getUnitLootSourceName("target") or getUnitLootSourceName("mouseover")
+    if name then
+        return name
+    end
+
+    if recentDeadSource
+        and ADDON.GetNow() - (recentDeadSource.timestamp or 0) <= RECENT_SOURCE_SECONDS then
+        return recentDeadSource.name
+    end
+    recentDeadSource = nil
     return nil
 end
 
 local function createOrReuseSegment(sourceName)
     local now = ADDON.GetNow()
     if currentLootSegment and now - (lastLootTime or 0) <= LOOT_GROUP_SECONDS then
+        if isUnknownName(currentLootSegment.sourceName) and not isUnknownName(sourceName) then
+            currentLootSegment.sourceName = sourceName
+        end
         lastLootTime = now
         return currentLootSegment, false
     end
@@ -196,6 +241,17 @@ local function createOrReuseSegment(sourceName)
     currentLootSegment = segment
     lastLootTime = now
     return segment, true
+end
+
+local function captureDeadUnit(_, timestamp, subEvent, sourceGUID, sourceName, sourceFlags, destGUID, destName, destFlags)
+    if subEvent ~= "UNIT_DIED" and subEvent ~= "UNIT_DESTROYED" then
+        return
+    end
+    if destFlags and bit and bit.band and COMBATLOG_OBJECT_REACTION_HOSTILE
+        and bit.band(destFlags, COMBATLOG_OBJECT_REACTION_HOSTILE) == 0 then
+        return
+    end
+    rememberDeadSource(destGUID, destName)
 end
 
 local function resolveRecipientMethod(defaultMethod, rollInfo, item)
@@ -887,4 +943,5 @@ function ADDON.InitializeTracker()
     DudesUtils.EventHandler.Add("LOOT_OPENED", function()
         handleLootOpened()
     end)
+    DudesUtils.EventHandler.Add("COMBAT_LOG_EVENT_UNFILTERED", captureDeadUnit)
 end

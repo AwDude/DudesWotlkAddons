@@ -53,7 +53,9 @@ local flexFrameNames = {
 	ItemSocketingFrame 		        = NO_DRAG_TARGETS,
 	HelpFrame 				        = NO_DRAG_TARGETS,
 	StaticPopup1 			        = NO_DRAG_TARGETS,
-	LFDParentFrame 			        = NO_DRAG_TARGETS
+	LFDParentFrame 			        = NO_DRAG_TARGETS,
+	LFDDungeonReadyPopup            = NO_DRAG_TARGETS,
+    BarberShopFrame                 = NO_DRAG_TARGETS
 }
 local scaleFrameNames = {
 	"InspectModelFrame",
