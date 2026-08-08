@@ -175,6 +175,12 @@ local function loadPosition(frame)
 	if pos then
 		frame:ClearAllPoints()
 		frame:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4])
+	elseif frame:GetNumPoints() == 0 then
+		-- Some Blizzard panels, such as LFDParentFrame, rely entirely on the
+		-- UIPanel manager to receive their initial anchor. Since flexible frames
+		-- are removed from that manager, keep them visible when no saved position
+		-- exists (for example after resetting frames or enabling a new profile).
+		frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
 	end
 end
 
