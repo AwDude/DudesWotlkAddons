@@ -9,6 +9,7 @@
 Bindings.xml
 Core.lua
 Data.lua
+Popup.lua
 Tracker.lua
 UI.lua
 Settings.lua

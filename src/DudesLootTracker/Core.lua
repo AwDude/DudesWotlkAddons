@@ -6,6 +6,20 @@ local DEFAULT_SETTINGS = {
     minimapAngle = 260,
     hideLootChatMessages = false,
     maxLootEntries = 900,
+    lootPopup = {
+        enabled = false,
+        ownOnly = true,
+        debug = false,
+        duration = 8,
+        growUp = false,
+        width = 300,
+        position = {
+            point = "CENTER",
+            relativePoint = "CENTER",
+            xOfs = 0,
+            yOfs = 160,
+        },
+    },
     window = {
         width = 880,
         height = 560,
@@ -16,8 +30,12 @@ local DEFAULT_SETTINGS = {
     },
     filters = {
         ownOnly = false,
-        boeOnly = false,
         emblems = false,
+        bindings = {
+            boe = true,
+            bop = true,
+            other = true,
+        },
         minItemLevel = nil,
         maxItemLevel = nil,
         minRequiredLevel = nil,
@@ -29,6 +47,11 @@ local DEFAULT_SETTINGS = {
             uncommon = true,
             common = true,
             poor = true,
+        },
+        types = {
+            weapon = true,
+            armor = true,
+            other = true,
         },
         areas = {
             raid = true,
@@ -179,6 +202,12 @@ function ADDON.GetFilters()
     local settings = ADDON.GetSettings()
     settings.filters = settings.filters or copyTable(DEFAULT_SETTINGS.filters)
     mergeDefaults(settings.filters, DEFAULT_SETTINGS.filters)
+    if settings.filters.boeOnly ~= nil then
+        if settings.filters.boeOnly then
+            settings.filters.bindings = { boe = true, bop = false, other = false }
+        end
+        settings.filters.boeOnly = nil
+    end
     return settings.filters
 end
 
@@ -260,6 +289,9 @@ function ADDON.Initialize()
     end
     if ADDON.CreateMinimapButton then
         ADDON.CreateMinimapButton()
+    end
+    if ADDON.CreateLootPopup then
+        ADDON.CreateLootPopup()
     end
     if ADDON.InitializeTracker then
         ADDON.InitializeTracker()

@@ -15,8 +15,6 @@ local requestLootViewportRefresh
 local renderLootLayoutEntry
 local getInstanceGroupKey
 local getAreaType
-local rollMethodColumnTexts = {}
-local rollTooltipHooked
 local BORDER_R, BORDER_G, BORDER_B = 0.32, 0.38, 0.46
 local HOVER_R, HOVER_G, HOVER_B = 0.72, 0.86, 1
 local MIN_WIDTH, MIN_HEIGHT = 620, 340
@@ -41,6 +39,7 @@ local CONTROL_LABEL_GAP = 6
 local CHECKBOX_LABEL_GAP = 13
 local CONTROL_ROW_HEIGHT = 26
 local CARD_GAP = 8
+local FILTER_CARD_GAP = 5
 local AREA_HEADER_HEIGHT = 15
 local COLLAPSED_AREA_HEIGHT = 15
 local ITEM_ROW_HEIGHT = 34
@@ -356,7 +355,7 @@ local function placeScrollBar(scroll, xOffset, bottomOffset)
     scrollBar:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", xOffset or -4, bottomOffset or 16)
 end
 
-local function placeScrollBarBeforeDivider(scroll, dividerX, bottomOffset)
+local function placeScrollBarBeforeDivider(scroll, dividerX, bottomOffset, topOffset)
     if not scroll or not scroll.GetName then
         return
     end
@@ -365,7 +364,7 @@ local function placeScrollBarBeforeDivider(scroll, dividerX, bottomOffset)
         return
     end
     scrollBar:ClearAllPoints()
-    scrollBar:SetPoint("TOPRIGHT", window, "TOPLEFT", dividerX - 4, -26)
+    scrollBar:SetPoint("TOPRIGHT", window, "TOPLEFT", dividerX - 4, topOffset or -26)
     scrollBar:SetPoint("BOTTOMRIGHT", window, "BOTTOMLEFT", dividerX - 4, bottomOffset or 16)
 end
 
@@ -474,10 +473,32 @@ local function getQualityKey(quality)
     return "common"
 end
 
+local WEAPON_EQUIP_LOCS = {
+    INVTYPE_WEAPON = true,
+    INVTYPE_2HWEAPON = true,
+    INVTYPE_WEAPONMAINHAND = true,
+    INVTYPE_WEAPONOFFHAND = true,
+    INVTYPE_RANGED = true,
+    INVTYPE_RANGEDRIGHT = true,
+    INVTYPE_THROWN = true,
+}
+
+local function getTypeKey(item)
+    local equipLoc = item and item.equipLoc or ""
+    if WEAPON_EQUIP_LOCS[equipLoc] then
+        return "weapon"
+    elseif (item and item.isEquipment) or (equipLoc ~= "" and equipLoc ~= "INVTYPE_NON_EQUIP") then
+        return "armor"
+    end
+    return "other"
+end
+
 local function rowPassesFilters(item, segment)
     local filters = ADDON.GetFilters()
     filters.qualities = filters.qualities or {}
     filters.areas = filters.areas or { raid = true, instance = true, world = true }
+    filters.bindings = filters.bindings or { boe = true, bop = true, other = true }
+    filters.types = filters.types or { weapon = true, armor = true, other = true }
 
     local isEmblem = ADDON.IsEmblem and ADDON.IsEmblem(item)
     if isEmblem then
@@ -499,11 +520,19 @@ local function rowPassesFilters(item, segment)
             return false
         end
     end
-    if filters.boeOnly and not (ADDON.RefreshItemBindInfo and ADDON.RefreshItemBindInfo(item)) then
+    local bindType = "other"
+    if ADDON.RefreshItemBindInfo then
+        local _, resolvedBindType = ADDON.RefreshItemBindInfo(item)
+        bindType = resolvedBindType or bindType
+    end
+    if not filters.bindings[bindType or "other"] then
         return false
     end
 
     if not filters.qualities[getQualityKey(item.quality)] then
+        return false
+    end
+    if not filters.types[getTypeKey(item)] then
         return false
     end
     if not filters.areas[getAreaType(segment)] then
@@ -852,51 +881,6 @@ local function toggleAllLootExpanded()
     setAllLootExpanded(not anyExpanded)
 end
 
-local function hideRollMethodColumns()
-    for _, text in ipairs(rollMethodColumnTexts) do
-        text:Hide()
-    end
-end
-
-local function ensureRollTooltipHook()
-    if not rollTooltipHooked and GameTooltip and GameTooltip.HookScript then
-        GameTooltip:HookScript("OnHide", hideRollMethodColumns)
-        rollTooltipHooked = true
-    end
-end
-
-local function layoutRollMethodColumns(rows)
-    if #rows == 0 then
-        return
-    end
-    ensureRollTooltipHook()
-    if GameTooltip.SetMinimumWidth then
-        GameTooltip:SetMinimumWidth(220)
-    end
-    GameTooltip:Show()
-    for index, row in ipairs(rows) do
-        local leftLine = _G["GameTooltipTextLeft" .. tostring(row.lineIndex)]
-        local rightLine = _G["GameTooltipTextRight" .. tostring(row.lineIndex)]
-        if leftLine and rightLine then
-            local text = rollMethodColumnTexts[index]
-            if not text then
-                text = GameTooltip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                text:SetWidth(82)
-                text:SetJustifyH("CENTER")
-                rollMethodColumnTexts[index] = text
-            end
-            text:ClearAllPoints()
-            text:SetPoint("RIGHT", rightLine, "LEFT", -4, 0)
-            text:SetText(row.method)
-            text:SetTextColor(row.r, row.g, row.b)
-            text:Show()
-        end
-    end
-    for index = #rows + 1, #rollMethodColumnTexts do
-        rollMethodColumnTexts[index]:Hide()
-    end
-end
-
 local function addRecipientTooltip(item)
     if not (ADDON.IsEmblem and ADDON.IsEmblem(item)) or #(item.recipients or {}) == 0 then
         return
@@ -914,25 +898,24 @@ local function addRollTooltip(item)
         return
     end
     GameTooltip:AddLine(" ")
-    local methodRows = {}
     if #(item.rolls or {}) == 0 then
         GameTooltip:AddLine("Keine einzelnen Würfelmeldungen empfangen", 1, 0.72, 0.25)
     else
         for _, roll in ipairs(item.rolls or {}) do
             local method = formatLootMethod(roll.method)
             local result = roll.result and tostring(roll.result) or ""
+            local assignment = method
+            if result ~= "" then
+                if #result == 1 then
+                    result = " " .. result
+                end
+                assignment = method .. ": " .. result
+            end
             local r, g, b = 0.78, 0.82, 0.88
             if roll.won then
                 r, g, b = 1, 0.82, 0
             end
-            GameTooltip:AddDoubleLine(tostring(roll.name or "?"), result, r, g, b, r, g, b)
-            table.insert(methodRows, {
-                lineIndex = GameTooltip:NumLines(),
-                method = method,
-                r = r,
-                g = g,
-                b = b,
-            })
+            GameTooltip:AddDoubleLine(tostring(roll.name or "?"), assignment, r, g, b, r, g, b)
         end
     end
     if (tonumber(item.rollInstances) or 1) > 1 then
@@ -946,12 +929,10 @@ local function addRollTooltip(item)
     if item.rollHistoryIncomplete then
         GameTooltip:AddLine("Würfelverlauf möglicherweise unvollständig", 1, 0.72, 0.25)
     end
-    layoutRollMethodColumns(methodRows)
 end
 
 local function setupItemTooltip(frame, item)
     frame:SetScript("OnEnter", function(self)
-        hideRollMethodColumns()
         if GameTooltip.SetMinimumWidth then
             GameTooltip:SetMinimumWidth(0)
         end
@@ -975,7 +956,6 @@ local function setupAssignmentTooltip(frame, item)
         return
     end
     frame:SetScript("OnEnter", function(self)
-        hideRollMethodColumns()
         if GameTooltip.SetMinimumWidth then
             GameTooltip:SetMinimumWidth(0)
         end
@@ -1424,13 +1404,14 @@ end
 local function resetFilters()
     local filters = ADDON.GetFilters()
     filters.ownOnly = false
-    filters.boeOnly = false
     filters.emblems = false
+    filters.bindings = { boe = true, bop = true, other = true }
     filters.minItemLevel = nil
     filters.maxItemLevel = nil
     filters.minRequiredLevel = nil
     filters.maxRequiredLevel = nil
     filters.qualities = { legendary = true, epic = true, rare = true, uncommon = true, common = true, poor = true }
+    filters.types = { weapon = true, armor = true, other = true }
     filters.areas = { raid = true, instance = true, world = true }
 end
 
@@ -1453,6 +1434,24 @@ local function setAllAreas(value)
     areas.world = value
 end
 
+local function setAllBindings(value)
+    local filters = ADDON.GetFilters()
+    filters.bindings = filters.bindings or { boe = true, bop = true, other = true }
+    local bindings = filters.bindings
+    bindings.boe = value
+    bindings.bop = value
+    bindings.other = value
+end
+
+local function setAllTypes(value)
+    local filters = ADDON.GetFilters()
+    filters.types = filters.types or { weapon = true, armor = true, other = true }
+    local types = filters.types
+    types.weapon = value
+    types.armor = value
+    types.other = value
+end
+
 local function refreshControls()
     if not window or not window.controls then
         return
@@ -1468,8 +1467,11 @@ local function refreshControls()
     window.controlContent:SetHeight(math.max(1, contentHeight))
 
     window.controls.ownOnly:SetChecked(filters.ownOnly and true or false)
-    window.controls.boeOnly:SetChecked(filters.boeOnly and true or false)
     window.controls.emblems:SetChecked(filters.emblems and true or false)
+    filters.bindings = filters.bindings or { boe = true, bop = true, other = true }
+    window.controls.boe:SetChecked(filters.bindings.boe)
+    window.controls.bop:SetChecked(filters.bindings.bop)
+    window.controls.otherBinding:SetChecked(filters.bindings.other)
     window.controls.minItemLevel:SetText(formatOpenNumber(filters.minItemLevel))
     window.controls.maxItemLevel:SetText(formatOpenNumber(filters.maxItemLevel))
     window.controls.minRequiredLevel:SetText(formatOpenNumber(filters.minRequiredLevel))
@@ -1480,6 +1482,10 @@ local function refreshControls()
     window.controls.uncommon:SetChecked(filters.qualities.uncommon)
     window.controls.common:SetChecked(filters.qualities.common)
     window.controls.poor:SetChecked(filters.qualities.poor)
+    filters.types = filters.types or { weapon = true, armor = true, other = true }
+    window.controls.typeWeapon:SetChecked(filters.types.weapon)
+    window.controls.typeArmor:SetChecked(filters.types.armor)
+    window.controls.typeOther:SetChecked(filters.types.other)
     filters.areas = filters.areas or { raid = true, instance = true, world = true }
     window.controls.raid:SetChecked(filters.areas.raid)
     window.controls.instance:SetChecked(filters.areas.instance)
@@ -1513,7 +1519,7 @@ local function addControl(parent, control, y, height, titleStyle)
             control.text:SetJustifyH("RIGHT")
         end
     end
-    return y - height - CARD_GAP, card
+    return y - height - FILTER_CARD_GAP, card
 end
 
 local function addNumberRange(parent, y, label, minBox, maxBox)
@@ -1553,7 +1559,7 @@ local function addNumberRange(parent, y, label, minBox, maxBox)
     text:SetText(label)
     text:SetTextColor(1, 1, 1)
 
-    return y - cardHeight - CARD_GAP, card
+    return y - cardHeight - FILTER_CARD_GAP, card
 end
 
 local function bindNumberFilter(box, filterKey, minValue, maxValue)
@@ -1622,7 +1628,7 @@ local function createGroupCard(parent, y, title, toggleAll, entries)
         rowY = rowY - rowHeight
     end
 
-    return y - height - CARD_GAP, card
+    return y - height - FILTER_CARD_GAP, card
 end
 
 local function createControls()
@@ -1634,26 +1640,23 @@ local function createControls()
     window.filterFrame = filterFrame
     filterFrame:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
     filterFrame:SetWidth(sectionWidth)
-    local y = -8
+    local y = 0
 
-    local filterTitle = createSectionTitle(filterFrame, "Filter")
+    local filterTitle = createSectionTitle(window, "Filter")
     window.filterTitle = filterTitle
-    filterTitle:SetPoint("TOPLEFT", filterFrame, "TOPLEFT", 14, y)
     filterTitle:SetFont(STANDARD_TEXT_FONT, 15, "")
     window.lootTitle = createSectionTitle(window, "Beute")
     window.lootTitle:SetFont(STANDARD_TEXT_FONT, 15, "")
     window.lootTitleButton = CreateFrame("Button", nil, window)
     window.lootTitleButton:SetScript("OnClick", toggleAllLootExpanded)
     window.lootTitleButton:HookScript("OnMouseDown", clearFocusedNumberBox)
-    local reset = createSmallButton(filterFrame, "Zurücksetzen", 88)
+    local reset = createSmallButton(window, "Zurücksetzen", 88)
     window.resetFiltersButton = reset
     reset:GetFontString():SetFont(STANDARD_TEXT_FONT, 10, "")
-    reset:SetPoint("TOPRIGHT", filterFrame, "TOPRIGHT", -10, y + 3)
     reset:SetScript("OnClick", function()
         resetFilters()
         ADDON.RefreshMainWindow()
     end)
-    y = y - TITLE_CONTENT_GAP
 
     local ownOnly = createCheckbox(filterFrame, "Gegenstand erhalten")
     window.controls.ownOnly = ownOnly
@@ -1663,14 +1666,6 @@ local function createControls()
     end)
     y, ownOnly.dltCard = addControl(filterFrame, ownOnly, y, nil, true)
 
-    local boeOnly = createCheckbox(filterFrame, "nur BoE")
-    window.controls.boeOnly = boeOnly
-    boeOnly:SetScript("OnClick", function(self)
-        ADDON.GetFilters().boeOnly = self:GetChecked() and true or false
-        ADDON.RefreshMainWindow()
-    end)
-    y, boeOnly.dltCard = addControl(filterFrame, boeOnly, y, nil, true)
-
     local emblems = createCheckbox(filterFrame, "Embleme")
     window.controls.emblems = emblems
     emblems:SetScript("OnClick", function(self)
@@ -1679,17 +1674,31 @@ local function createControls()
     end)
     y, emblems.dltCard = addControl(filterFrame, emblems, y, nil, true)
 
-    window.controls.minItemLevel = createNumberBox(filterFrame, 38)
-    window.controls.maxItemLevel = createNumberBox(filterFrame, 38)
-    y = addNumberRange(filterFrame, y, "Gegenstandsstufe", window.controls.minItemLevel, window.controls.maxItemLevel)
-    bindNumberFilter(window.controls.minItemLevel, "minItemLevel", 1, 284)
-    bindNumberFilter(window.controls.maxItemLevel, "maxItemLevel", 1, 284)
-
-    window.controls.minRequiredLevel = createNumberBox(filterFrame, 38)
-    window.controls.maxRequiredLevel = createNumberBox(filterFrame, 38)
-    y = addNumberRange(filterFrame, y, "Level", window.controls.minRequiredLevel, window.controls.maxRequiredLevel)
-    bindNumberFilter(window.controls.minRequiredLevel, "minRequiredLevel", 0, 80)
-    bindNumberFilter(window.controls.maxRequiredLevel, "maxRequiredLevel", 0, 80)
+    local bindingMap = {
+        { key = "boe", controlKey = "boe", label = "BoE" },
+        { key = "bop", controlKey = "bop", label = "BoP" },
+        { key = "other", controlKey = "otherBinding", label = "Sonstige" },
+    }
+    local bindingEntries = {}
+    for _, entry in ipairs(bindingMap) do
+        local cb = createCheckbox(filterFrame, entry.label)
+        window.controls[entry.controlKey] = cb
+        cb:SetScript("OnClick", function(self)
+            local filters = ADDON.GetFilters()
+            filters.bindings = filters.bindings or { boe = true, bop = true, other = true }
+            filters.bindings[entry.key] = self:GetChecked() and true or false
+            ADDON.RefreshMainWindow()
+        end)
+        table.insert(bindingEntries, { checkbox = cb })
+    end
+    y = createGroupCard(filterFrame, y, "Bindung", function()
+        local filters = ADDON.GetFilters()
+        filters.bindings = filters.bindings or { boe = true, bop = true, other = true }
+        local bindings = filters.bindings
+        local allChecked = bindings.boe and bindings.bop and bindings.other
+        setAllBindings(not allChecked)
+        ADDON.RefreshMainWindow()
+    end, bindingEntries)
 
     local qualityMap = {
         { key = "legendary", label = "Legendär", color = "ff8000" },
@@ -1716,6 +1725,32 @@ local function createControls()
         setAllQuality(not allChecked)
         ADDON.RefreshMainWindow()
     end, qualityEntries)
+
+    local typeMap = {
+        { key = "weapon", controlKey = "typeWeapon", label = "Waffe" },
+        { key = "armor", controlKey = "typeArmor", label = "Rüstung" },
+        { key = "other", controlKey = "typeOther", label = "Sonstige" },
+    }
+    local typeEntries = {}
+    for _, entry in ipairs(typeMap) do
+        local cb = createCheckbox(filterFrame, entry.label)
+        window.controls[entry.controlKey] = cb
+        cb:SetScript("OnClick", function(self)
+            local filters = ADDON.GetFilters()
+            filters.types = filters.types or { weapon = true, armor = true, other = true }
+            filters.types[entry.key] = self:GetChecked() and true or false
+            ADDON.RefreshMainWindow()
+        end)
+        table.insert(typeEntries, { checkbox = cb })
+    end
+    y = createGroupCard(filterFrame, y, "Typ", function()
+        local filters = ADDON.GetFilters()
+        filters.types = filters.types or { weapon = true, armor = true, other = true }
+        local types = filters.types
+        local allChecked = types.weapon and types.armor and types.other
+        setAllTypes(not allChecked)
+        ADDON.RefreshMainWindow()
+    end, typeEntries)
 
     local areaMap = {
         { key = "raid", label = "Raid", color = "b88cff" },
@@ -1744,7 +1779,20 @@ local function createControls()
         setAllAreas(not allChecked)
         ADDON.RefreshMainWindow()
     end, areaEntries)
-    window.filterFrameHeight = -y - CARD_GAP
+
+    window.controls.minItemLevel = createNumberBox(filterFrame, 38)
+    window.controls.maxItemLevel = createNumberBox(filterFrame, 38)
+    y = addNumberRange(filterFrame, y, "Gegenstandsstufe", window.controls.minItemLevel, window.controls.maxItemLevel)
+    bindNumberFilter(window.controls.minItemLevel, "minItemLevel", 1, 284)
+    bindNumberFilter(window.controls.maxItemLevel, "maxItemLevel", 1, 284)
+
+    window.controls.minRequiredLevel = createNumberBox(filterFrame, 38)
+    window.controls.maxRequiredLevel = createNumberBox(filterFrame, 38)
+    y = addNumberRange(filterFrame, y, "Level", window.controls.minRequiredLevel, window.controls.maxRequiredLevel)
+    bindNumberFilter(window.controls.minRequiredLevel, "minRequiredLevel", 0, 80)
+    bindNumberFilter(window.controls.maxRequiredLevel, "maxRequiredLevel", 0, 80)
+
+    window.filterFrameHeight = -y - FILTER_CARD_GAP
     filterFrame:SetHeight(window.filterFrameHeight)
     content:SetHeight(window.filterFrameHeight)
 end
@@ -1762,11 +1810,31 @@ local function layoutWindow(refreshContent)
         local rightLeft = dividerX + DIVIDER_WIDTH + leftX
 
         window.controlScroll:ClearAllPoints()
-        window.controlScroll:SetPoint("TOPLEFT", window, "TOPLEFT", leftX, -10)
+        window.controlScroll:SetPoint("TOPLEFT", window, "TOPLEFT", leftX, TOP_TITLE_Y - TITLE_CONTENT_GAP)
         window.controlScroll:SetPoint("BOTTOMLEFT", window, "BOTTOMLEFT", leftX, leftX + SCROLLFRAME_BOTTOM_ADJUST)
         window.controlScroll:SetWidth(LEFT_WIDTH)
         window.controlContent:SetWidth(LEFT_WIDTH - 2)
-        placeScrollBarBeforeDivider(window.controlScroll, dividerX, leftX + SCROLLBAR_BOTTOM_INSET + SCROLLFRAME_BOTTOM_ADJUST)
+        placeScrollBarBeforeDivider(
+            window.controlScroll,
+            dividerX,
+            leftX + SCROLLBAR_BOTTOM_INSET + SCROLLFRAME_BOTTOM_ADJUST,
+            TOP_TITLE_Y - TITLE_CONTENT_GAP - 16
+        )
+
+        if window.filterTitle then
+            window.filterTitle:ClearAllPoints()
+            window.filterTitle:SetPoint("TOPLEFT", window, "TOPLEFT", leftX + 14, TOP_TITLE_Y)
+        end
+        if window.resetFiltersButton then
+            window.resetFiltersButton:ClearAllPoints()
+            window.resetFiltersButton:SetPoint(
+                "TOPRIGHT",
+                window,
+                "TOPLEFT",
+                leftX + LEFT_WIDTH - 10,
+                TOP_TITLE_Y + 3
+            )
+        end
 
         if window.divider then
             if window.dividerLeftOuterShadow then

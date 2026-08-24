@@ -1,11 +1,9 @@
 local ADDON = DudesLootTracker
 
 local activeRollsById = {}
-local activeRollItemsByItemId = {}
 local activeRollCountsByItemId = {}
-local closedRollItemsByItemId = {}
-local rollItemsAwaitingAwardByItemId = {}
-local activeRollCount = 0
+local activeRollSegmentsByItemId = {}
+local rollItemsByItemId = {}
 local registeredLootChatFilter
 local registeredRollHook
 local formatPatternCache = {}
@@ -89,10 +87,6 @@ local function getPlayerKey(name)
     return name and string.lower(name) or nil
 end
 
-local function isLocalPlayer(name)
-    return getPlayerKey(name) == getPlayerKey(UnitName and UnitName("player"))
-end
-
 local function getCaptureValues(captures)
     local playerName
     local number
@@ -170,6 +164,19 @@ local function findRecipient(item, name, predicate)
     return nil
 end
 
+local function findPlayerRoll(item, playerName, predicate)
+    local key = getPlayerKey(playerName)
+    if not item or not key then
+        return nil
+    end
+    for _, roll in ipairs(item.rolls or {}) do
+        if getPlayerKey(roll.name) == key and (not predicate or predicate(roll)) then
+            return roll
+        end
+    end
+    return nil
+end
+
 local function addOrUpdateRollWinner(item, name, method)
     local recipient = findRecipient(item, name, function(entry)
         return not entry.winnerRecorded
@@ -185,6 +192,35 @@ local function addOrUpdateRollWinner(item, name, method)
     return recipient
 end
 
+local function trackRollItem(item)
+    if not item or not item.itemId then
+        return
+    end
+    local items = rollItemsByItemId[item.itemId]
+    if not items then
+        items = {}
+        rollItemsByItemId[item.itemId] = items
+    end
+    table.insert(items, item)
+end
+
+local function untrackRollItem(item)
+    local itemId = item and item.itemId
+    local items = itemId and rollItemsByItemId[itemId]
+    if not items then
+        return
+    end
+    for index = #items, 1, -1 do
+        if items[index] == item then
+            table.remove(items, index)
+            break
+        end
+    end
+    if #items == 0 then
+        rollItemsByItemId[itemId] = nil
+    end
+end
+
 local function clearCompletedRollAward(item)
     if not item or not item.itemId or not item.rollComplete then
         return
@@ -194,25 +230,51 @@ local function clearCompletedRollAward(item)
             return
         end
     end
-    rollItemsAwaitingAwardByItemId[item.itemId] = nil
+    untrackRollItem(item)
 end
 
 local function confirmRollAward(link, recipient, count)
     local itemId = ADDON.GetItemId(link)
-    local item = itemId and (activeRollItemsByItemId[itemId]
-        or closedRollItemsByItemId[itemId]
-        or rollItemsAwaitingAwardByItemId[itemId])
-    if not item or not item.blizzardRollStarted then
+    local items = itemId and rollItemsByItemId[itemId]
+    if not items then
         return nil
     end
 
-    local entry = findRecipient(item, recipient, function(candidate)
-        return not candidate.awardConfirmed
-    end)
-    if not entry and not item.rollComplete then
+    local item
+    local entry
+    for _, candidateItem in ipairs(items) do
+        local candidateEntry = findRecipient(candidateItem, recipient, function(candidate)
+            return not candidate.awardConfirmed
+        end)
+        if candidateEntry then
+            item = candidateItem
+            entry = candidateEntry
+            break
+        end
+    end
+    if not item then
+        for _, candidateItem in ipairs(items) do
+            local matchingRoll = findPlayerRoll(candidateItem, recipient, function(roll)
+                return roll.method ~= "pass"
+            end)
+            if not candidateItem.rollComplete and matchingRoll and not findRecipient(candidateItem, recipient) then
+                item = candidateItem
+                break
+            end
+        end
+    end
+    if not item then
+        for _, candidateItem in ipairs(items) do
+            if not candidateItem.rollComplete and not findRecipient(candidateItem, recipient) then
+                item = candidateItem
+                break
+            end
+        end
+    end
+    if item and not entry then
         entry = addRecipient(item, recipient, "roll", count, false)
     end
-    if not entry then
+    if not item or not entry then
         return nil
     end
 
@@ -307,18 +369,20 @@ local function createStandaloneRollItem(link)
     if item then
         item.blizzardRollStarted = true
         item.rollHistoryIncomplete = true
-        rollItemsAwaitingAwardByItemId[item.itemId] = item
+        trackRollItem(item)
     end
     return item
 end
 
-local function getRollItem(link, allowStandalone)
+local function getRollItem(link, allowStandalone, predicate)
     local itemId = ADDON.GetItemId(link)
-    local item = itemId and (activeRollItemsByItemId[itemId]
-        or closedRollItemsByItemId[itemId]
-        or rollItemsAwaitingAwardByItemId[itemId])
-    if item or not allowStandalone then
-        return item
+    for _, item in ipairs(itemId and rollItemsByItemId[itemId] or {}) do
+        if (not predicate or predicate(item)) then
+            return item
+        end
+    end
+    if not allowStandalone then
+        return nil
     end
     return createStandaloneRollItem(link)
 end
@@ -329,6 +393,13 @@ local function addRollSelection(item, playerName, method, rollId)
         return nil
     end
     item.rolls = item.rolls or {}
+    local existing = findPlayerRoll(item, playerName)
+    if existing then
+        existing.method = method
+        existing.timestamp = ADDON.GetNow()
+        existing.rollId = rollId or existing.rollId
+        return existing
+    end
     local roll = {
         name = playerName,
         method = method,
@@ -344,37 +415,78 @@ local function addRollResult(item, playerName, method, result)
     if not item or not playerName or not method or not result then
         return nil
     end
-    item.rolls = item.rolls or {}
-    local key = getPlayerKey(playerName)
-    for _, roll in ipairs(item.rolls) do
-        if getPlayerKey(roll.name) == key and roll.method == method and roll.result == nil then
-            roll.result = result
-            roll.timestamp = ADDON.GetNow()
-            return roll
-        end
+    local roll = findPlayerRoll(item, playerName, function(candidate)
+        return candidate.method == method
+    end)
+    if not roll then
+        roll = addRollSelection(item, playerName, method)
     end
-    local roll = addRollSelection(item, playerName, method)
     roll.result = result
+    roll.timestamp = ADDON.GetNow()
     return roll
 end
 
 local function getWinnerRoll(item, playerName, method)
-    local key = getPlayerKey(playerName)
-    local bestRoll
-    local bestResult = -1
-    for _, roll in ipairs(item and item.rolls or {}) do
-        if getPlayerKey(roll.name) == key
-            and roll.method ~= "pass"
-            and (not method or roll.method == method)
-            and not roll.won then
-            local result = tonumber(roll.result) or -1
-            if result > bestResult then
-                bestResult = result
-                bestRoll = roll
+    return findPlayerRoll(item, playerName, function(roll)
+        return roll.method ~= "pass" and (not method or roll.method == method) and not roll.won
+    end)
+end
+
+local function getRollItemForSelection(link, playerName)
+    -- Chat messages do not contain a roll ID. Assign each player's first choice
+    -- to the first identical item they have not handled yet, then continue in order.
+    return getRollItem(link, false, function(item)
+        return not item.rollComplete and not findPlayerRoll(item, playerName)
+    end)
+end
+
+local function confirmRecordedRollSelection(link, playerName, method)
+    local itemId = ADDON.GetItemId(link)
+    for _, item in ipairs(itemId and rollItemsByItemId[itemId] or {}) do
+        local roll = findPlayerRoll(item, playerName, function(candidate)
+            return candidate.method == method and not candidate.chatConfirmed
+        end)
+        if roll then
+            roll.chatConfirmed = true
+            roll.timestamp = ADDON.GetNow()
+            return roll
+        end
+    end
+    return nil
+end
+
+local function getRollItemForResult(link, playerName, method)
+    local itemId = ADDON.GetItemId(link)
+    for _, item in ipairs(itemId and rollItemsByItemId[itemId] or {}) do
+        local roll = findPlayerRoll(item, playerName, function(candidate)
+            return candidate.method == method and candidate.result == nil
+        end)
+        if roll then
+            return item
+        end
+    end
+    return getRollItemForSelection(link, playerName)
+end
+
+local function getRollItemForWinner(link, playerName, method, result)
+    local itemId = ADDON.GetItemId(link)
+    local items = itemId and rollItemsByItemId[itemId] or {}
+    if result then
+        for _, item in ipairs(items) do
+            local roll = getWinnerRoll(item, playerName, method)
+            if not item.rollComplete and roll and tonumber(roll.result) == tonumber(result) then
+                return item
             end
         end
     end
-    return bestRoll
+    for _, item in ipairs(items) do
+        if not item.rollComplete and getWinnerRoll(item, playerName, method) then
+            return item
+        end
+    end
+    return getRollItem(link, true, function(item)
+        return not item.rollComplete
+    end)
 end
 
 local function handleRollSelection(message, link)
@@ -385,10 +497,13 @@ local function handleRollSelection(message, link)
             if definition.self then
                 playerName = UnitName and UnitName("player")
             end
-            local item = getRollItem(link, false)
-            -- RollOnLoot records local choices without depending on chat verbosity.
-            if definition.method == "pass" or not isLocalPlayer(playerName) then
-                addRollSelection(item, playerName, definition.method)
+            local roll = confirmRecordedRollSelection(link, playerName, definition.method)
+            if not roll then
+                local item = getRollItemForSelection(link, playerName)
+                roll = addRollSelection(item, playerName, definition.method)
+                if roll then
+                    roll.chatConfirmed = true
+                end
             end
             refreshWindow()
             return true
@@ -402,7 +517,12 @@ local function handleRollResult(message, link)
         local captures = matchLocalizedFormat(message, definition.text)
         if captures then
             local playerName, result = getCaptureValues(captures)
-            addRollResult(getRollItem(link, false), playerName, definition.method, result)
+            addRollResult(
+                getRollItemForResult(link, playerName, definition.method),
+                playerName,
+                definition.method,
+                result
+            )
             refreshWindow()
             return true
         end
@@ -418,7 +538,7 @@ local function handleRollWinner(message, link)
             if definition.self then
                 playerName = UnitName and UnitName("player")
             end
-            local item = getRollItem(link, true)
+            local item = getRollItemForWinner(link, playerName, definition.method, result)
             if item and playerName then
                 local winnerRoll
                 if result and definition.method then
@@ -439,11 +559,8 @@ local function handleRollWinner(message, link)
                 end
                 item.rollMethod = method
                 addOrUpdateRollWinner(item, playerName, method)
-                item.rollOutcomes = (tonumber(item.rollOutcomes) or 0) + 1
-                item.rollComplete = item.rollOutcomes >= (tonumber(item.rollInstances) or 1)
-                if item.rollComplete then
-                    closedRollItemsByItemId[item.itemId] = nil
-                end
+                item.rollOutcomes = 1
+                item.rollComplete = true
                 clearCompletedRollAward(item)
             end
             refreshWindow()
@@ -458,15 +575,14 @@ local function handleAllPassed(message, link)
     if not captures then
         return false
     end
-    local item = getRollItem(link, true)
+    local item = getRollItem(link, true, function(candidate)
+        return not candidate.rollComplete
+    end)
     if item then
-        item.rollOutcomes = (tonumber(item.rollOutcomes) or 0) + 1
-        item.rollComplete = item.rollOutcomes >= (tonumber(item.rollInstances) or 1)
+        item.rollOutcomes = 1
+        item.rollComplete = true
         item.allPassed = true
-        if item.rollComplete then
-            closedRollItemsByItemId[item.itemId] = nil
-            rollItemsAwaitingAwardByItemId[item.itemId] = nil
-        end
+        untrackRollItem(item)
     end
     refreshWindow()
     return true
@@ -498,41 +614,57 @@ local function handleLootMessage(message)
             segment = segment or createStorageBatch("loot")
             addAward(segment, awardLink, recipient, "loot", count)
         end
+        if ADDON.ShowLootPopupItem then
+            ADDON.ShowLootPopupItem(awardLink, count, recipient)
+        end
     end
     refreshWindow()
 end
 
 local function handleRollStarted(rollId)
+    if rollId and activeRollsById[rollId] then
+        return
+    end
     local link = rollId and GetLootRollItemLink and GetLootRollItemLink(rollId)
     local itemId = ADDON.GetItemId(link)
     if not rollId or not link or not itemId then
         return
     end
 
-    if activeRollCount == 0 then
-        activeRollItemsByItemId = {}
-        activeRollCountsByItemId = {}
-    end
-    closedRollItemsByItemId[itemId] = nil
-    local item = activeRollItemsByItemId[itemId]
-    if not item then
-        item = ADDON.AddItemToSegment(createStorageBatch("roll"), link, 1)
-        if not item then
-            return
+    local existingItems = rollItemsByItemId[itemId]
+    local hasActiveItem
+    for _, existingItem in ipairs(existingItems or {}) do
+        if existingItem.rollId and activeRollsById[existingItem.rollId] == existingItem then
+            hasActiveItem = true
+            break
         end
-        item.blizzardRollStarted = true
-        item.rollInstances = 1
-        activeRollItemsByItemId[itemId] = item
-        activeRollCountsByItemId[itemId] = 0
-        rollItemsAwaitingAwardByItemId[itemId] = item
-    else
-        item.rollInstances = (tonumber(item.rollInstances) or 1) + 1
-        item.count = item.rollInstances
     end
+    if not hasActiveItem then
+        -- A later roll for the same item starts a new sequence. Old unresolved
+        -- candidates remain in history but must not receive events from this batch.
+        rollItemsByItemId[itemId] = nil
+    end
+
+    local segment = activeRollSegmentsByItemId[itemId]
+    local createdSegment
+    if not segment then
+        segment = createStorageBatch("roll")
+        activeRollSegmentsByItemId[itemId] = segment
+        createdSegment = true
+    end
+    local item = ADDON.AddItemToSegment(segment, link, 1)
+    if not item then
+        if createdSegment then
+            activeRollSegmentsByItemId[itemId] = nil
+        end
+        return
+    end
+    item.blizzardRollStarted = true
+    item.rollId = rollId
+    trackRollItem(item)
 
     activeRollsById[rollId] = item
     activeRollCountsByItemId[itemId] = (activeRollCountsByItemId[itemId] or 0) + 1
-    activeRollCount = activeRollCount + 1
     refreshWindow()
 end
 
@@ -545,29 +677,27 @@ local function handleRollCancelled(rollId)
     activeRollsById[rollId] = nil
     local itemId = item.itemId
     activeRollCountsByItemId[itemId] = math.max(0, (activeRollCountsByItemId[itemId] or 1) - 1)
-    activeRollCount = math.max(0, activeRollCount - 1)
     if activeRollCountsByItemId[itemId] == 0 then
         activeRollCountsByItemId[itemId] = nil
-        activeRollItemsByItemId[itemId] = nil
-        if not item.rollComplete then
-            item.rollClosed = true
-            closedRollItemsByItemId[itemId] = item
-        end
+        activeRollSegmentsByItemId[itemId] = nil
     end
-    if activeRollCount == 0 then
-        activeRollItemsByItemId = {}
-        activeRollCountsByItemId = {}
+    if not item.rollComplete then
+        item.rollClosed = true
     end
     refreshWindow()
 end
 
 local function recordPlayerRoll(rollId, rollType)
     local item = rollId and activeRollsById[rollId]
-    local method = rollType == 1 and "need"
+    local method = rollType == 0 and "pass"
+        or rollType == 1 and "need"
         or rollType == 2 and "greed"
         or rollType == 3 and "disenchant"
     if item and method then
-        addRollSelection(item, UnitName and UnitName("player"), method, rollId)
+        local roll = addRollSelection(item, UnitName and UnitName("player"), method, rollId)
+        if roll and roll.chatConfirmed == nil then
+            roll.chatConfirmed = false
+        end
         refreshWindow()
     end
 end

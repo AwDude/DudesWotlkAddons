@@ -36,9 +36,9 @@ local function parseItemName(link)
     return string.match(link, "%[(.-)%]")
 end
 
-local function isBindOnEquip(link)
+local function getItemBindType(link)
     if not link or not CreateFrame then
-        return false
+        return "other"
     end
     if not bindTooltip then
         bindTooltip = CreateFrame("GameTooltip", "DudesLootTrackerDataBindTooltip", UIParent, "GameTooltipTemplate")
@@ -46,15 +46,18 @@ local function isBindOnEquip(link)
     end
     bindTooltip:ClearLines()
     bindTooltip:SetHyperlink(link)
-    local bindText = ITEM_BIND_ON_EQUIP or "Binds when equipped"
+    local bindOnEquipText = ITEM_BIND_ON_EQUIP or "Binds when equipped"
+    local bindOnPickupText = ITEM_BIND_ON_PICKUP or "Binds when picked up"
     for i = 1, 12 do
         local line = _G["DudesLootTrackerDataBindTooltipTextLeft" .. i]
         local text = line and line:GetText()
-        if text and text == bindText then
-            return true
+        if text == bindOnEquipText then
+            return "boe"
+        elseif text == bindOnPickupText then
+            return "bop"
         end
     end
-    return false
+    return "other"
 end
 
 local function getLootMethodInfo()
@@ -127,6 +130,7 @@ function ADDON.BuildItem(link, count)
         equipLoc = itemEquipLoc or "",
         isEquipment = isEquipment and true or false,
         bindOnEquip = nil,
+        bindType = nil,
         bindInfoReady = false,
         itemType = itemType or "",
         itemSubType = itemSubType or "",
@@ -164,12 +168,16 @@ function ADDON.RefreshItemInfo(item)
 end
 
 function ADDON.RefreshItemBindInfo(item)
-    if not item or item.bindInfoReady then
-        return item and item.bindOnEquip
+    if not item then
+        return false, "other"
     end
-    item.bindOnEquip = isBindOnEquip(item.link)
+    if item.bindInfoReady and item.bindType then
+        return item.bindOnEquip, item.bindType
+    end
+    item.bindType = getItemBindType(item.link)
+    item.bindOnEquip = item.bindType == "boe"
     item.bindInfoReady = true
-    return item.bindOnEquip
+    return item.bindOnEquip, item.bindType
 end
 
 function ADDON.GetInstanceContext()

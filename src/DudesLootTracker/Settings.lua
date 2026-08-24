@@ -179,6 +179,13 @@ local function layoutPanel()
     DudesUtils.SettingsUI.LayoutScrollablePanel(optionsPanel, 680)
 end
 
+local function refreshLootPopup()
+    if ADDON.ApplyLootPopupSettings then
+        ADDON.ApplyLootPopupSettings()
+    end
+    ADDON.RefreshSettings()
+end
+
 local function createOptionsPanel()
     if optionsPanel then
         return optionsPanel
@@ -205,6 +212,9 @@ local function createOptionsPanel()
         if ADDON.ApplySettingsProfile then
             ADDON.ApplySettingsProfile()
         end
+        if ADDON.ApplyLootPopupSettings then
+            ADDON.ApplyLootPopupSettings()
+        end
         if ADDON.PruneHistory then
             ADDON.PruneHistory()
         end
@@ -218,6 +228,52 @@ local function createOptionsPanel()
 
     local maxLootEntries = createEdit(content, c, "Max Einträge im Beute-Fenster", 60, function() return ADDON.GetSettings().maxLootEntries end, function(value) ADDON.GetSettings().maxLootEntries = ADDON.Clamp(tonumber(value) or 900, 50, 10000) ADDON.PruneHistory() end)
     table.insert(optionsPanel.controls, maxLootEntries)
+
+    local popupTitle = createText(content, "section")
+    popupTitle:SetPoint("TOPLEFT", maxLootEntries.labelText, "BOTTOMLEFT", 0, -26)
+    DudesUtils.SettingsUI.AnchorTextToContent(popupTitle, content)
+    popupTitle:SetHeight(24)
+    popupTitle:SetText("Loot-Popup")
+
+    c = createCheckbox(content, popupTitle, -8, "Popup für erhaltene Gegenstände anzeigen", function()
+        return ADDON.GetSettings().lootPopup.enabled
+    end, function(value)
+        ADDON.GetSettings().lootPopup.enabled = value
+        refreshLootPopup()
+    end)
+    table.insert(optionsPanel.controls, c)
+
+    c = createCheckbox(content, c, -8, "Nur eigenen Loot anzeigen", function()
+        return ADDON.GetSettings().lootPopup.ownOnly
+    end, function(value)
+        ADDON.GetSettings().lootPopup.ownOnly = value
+        refreshLootPopup()
+    end)
+    table.insert(optionsPanel.controls, c)
+
+    c = createCheckbox(content, c, -8, "Debugmodus: Beispiel-Loot anzeigen und Popup verschieben", function()
+        return ADDON.GetSettings().lootPopup.debug
+    end, function(value)
+        ADDON.GetSettings().lootPopup.debug = value
+        refreshLootPopup()
+    end)
+    table.insert(optionsPanel.controls, c)
+
+    c = createCheckbox(content, c, -8, "Liste nach oben erweitern (deaktiviert: nach unten)", function()
+        return ADDON.GetSettings().lootPopup.growUp
+    end, function(value)
+        ADDON.GetSettings().lootPopup.growUp = value
+        refreshLootPopup()
+    end)
+    table.insert(optionsPanel.controls, c)
+
+    local popupDuration = createEdit(content, c, "Anzeigedauer je Gegenstand in Sekunden (1-120)", 60, function()
+        return ADDON.GetSettings().lootPopup.duration
+    end, function(value)
+        ADDON.GetSettings().lootPopup.duration = ADDON.Clamp(tonumber(value) or 8, 1, 120)
+        refreshLootPopup()
+    end)
+    table.insert(optionsPanel.controls, popupDuration)
 
     optionsPanel:SetScript("OnShow", function()
         layoutPanel()
